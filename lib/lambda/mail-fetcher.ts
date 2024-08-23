@@ -1,17 +1,19 @@
 import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
-import puppeteer, { Page } from 'puppeteer';
+import puppeteer, { Browser, Page } from 'puppeteer';
 import chromium from '@sparticuz/chromium';
 import { parse } from 'date-fns';
-import { AnytimeMailBox } from './entry/mail';
+import { AnytimeMailBox, Mail } from './entry/mail';
 import { getMailFromDynamoDB, saveMailToDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
 
+// Define headers outside functions to avoid unnecessary object creation
 const headers = {
     'accept': 'application/json',
     'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
 };
 
-async function loadMoreMails(page: Page, refTimestamp: number): Promise<AnytimeMailBox[]> {
+// Helper function to fetch mails
+async function fetchMails(page: Page, refTimestamp: number, cookies: {}): Promise<AnytimeMailBox[]> {
     const data = {
         loadMenu: '1',
         refMalId: '0',
@@ -21,7 +23,7 @@ async function loadMoreMails(page: Page, refTimestamp: number): Promise<AnytimeM
     };
 
     try {
-        const response = await page.evaluate(async (data, headers) => {
+        const response = await page.evaluate(async (data, headers, cookies) => {
             const response = await fetch('https://packmail.anytimemailbox.com/app/mailbox-ajax/inbox', {
                 method: 'POST',
                 headers: new Headers(headers),
@@ -34,7 +36,7 @@ async function loadMoreMails(page: Page, refTimestamp: number): Promise<AnytimeM
             }
 
             return response.json();
-        }, data, headers);
+        }, data, headers, cookies);
 
         return response.mail.items;
     } catch (error) {
@@ -43,26 +45,39 @@ async function loadMoreMails(page: Page, refTimestamp: number): Promise<AnytimeM
     }
 }
 
-async function getMailIds(page: Page, startDate: Date, endDate: Date): Promise<AnytimeMailBox[]> {
-    const mailList: AnytimeMailBox[] = [];
+// Helper function to create mail object from API response
+function createMailObject(mail: AnytimeMailBox): Mail {
+    return {
+        any_mail_id: mail.malId,
+        message: mail.message,
+        image_path: mail.imageUrl,
+        creationDate: mail.creationDate,
+        assignedDate: mail.assignedDate,
+        lastActionDate: mail.lastActionDate,
+    };
+}
+
+async function getMailIds(page: Page, startDate: Date, endDate: Date, cookies: {}): Promise<Mail[]> {
+    const mailList: Mail[] = [];
     let refTimestamp = 0;
     let flag = true;
 
     while (flag) {
-        const mails = await loadMoreMails(page, refTimestamp);
+        console.log('refTimestamp', refTimestamp);
+        const mails = await fetchMails(page, refTimestamp, cookies);
 
         for (const mail of mails) {
             const assignedDate = parse(mail.assignedDate, 'MM/dd/yyyy', new Date());
             const lastActionDate = parse(mail.lastActionDate, 'MM/dd/yyyy', new Date());
-            const mailId = mail.malId;
 
+            console.log('timestamp', mail.timestamp);
             if (startDate <= assignedDate && assignedDate <= endDate) {
-                const mailData: AnytimeMailBox = {
-                    ...mail
-                };
+                const mailData = createMailObject(mail);
+
+                console.log('Processing mail with timestamp:', mail.timestamp);
 
                 // Check if mail already exists
-                const existingMail = await getMailFromDynamoDB(mailId);
+                const existingMail = await getMailFromDynamoDB(mail.malId);
 
                 if (existingMail) {
                     // Update existing mail
@@ -85,7 +100,7 @@ async function getMailIds(page: Page, startDate: Date, endDate: Date): Promise<A
             flag = false;
         }
 
-        if (mails.length > 0) {
+        if (mails.length > 0 && refTimestamp != mails[mails.length - 1].timestamp) {
             refTimestamp = mails[mails.length - 1].timestamp;
         }
     }
@@ -103,33 +118,41 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
         };
     }
 
+    let browser: Browser | null = null;
     try {
-        const browser = await puppeteer.launch({
+        browser = await puppeteer.launch({
             args: chromium.args,
             defaultViewport: chromium.defaultViewport,
             executablePath: await chromium.executablePath(),
-            headless: true
+            headless: true,
         });
         const page = await browser.newPage();
-        await page.goto('https://packmail.anytimemailbox.com/app/home');
+        await page.goto('https://packmail.anytimemailbox.com/app/home', {
+            waitUntil: 'networkidle2',
+        });
         await page.setCookie({
             name: 'ASP.NET_SessionId',
             value: anytimeAspNetSessionId,
             domain: 'packmail.anytimemailbox.com',
         });
-        const mailIds = await getMailIds(page, new Date(startDate), new Date(endDate));
+
+        const cookies = {
+            'ASP.NET_SessionId': anytimeAspNetSessionId
+        };
+
+        console.log('getting mails');
+
+        const mailIds = await getMailIds(page, new Date(startDate), new Date(endDate), cookies);
 
         console.log('Mail Length:', mailIds.length);
 
         await browser.close();
-
         return {
             statusCode: 200,
-            body: JSON.stringify({ message: 'Emails are being processed successfully' }),
+            body: JSON.stringify({ message: 'Emails processed successfully' }),
         };
-
     } catch (error) {
-        console.error('Error during Puppeteer execution:', error);
+        console.error('Error during processed:', error);
         return {
             statusCode: 500,
             body: JSON.stringify({ message: 'Internal server error', error: error }),

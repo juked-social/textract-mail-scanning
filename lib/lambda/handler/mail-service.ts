@@ -1,108 +1,108 @@
 import {
     DynamoDBClient,
-    ReturnValue,
+    ProvisionedThroughputExceededException,
 } from '@aws-sdk/client-dynamodb';
-import { AnytimeMailBox } from '../entry/mail';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
+import { Mail } from '../entry/mail';
+import {
+    DynamoDBDocumentClient,
+    GetCommand,
+    PutCommand,
+    UpdateCommand,
+    UpdateCommandInput
+} from '@aws-sdk/lib-dynamodb';
 
 // Initialize DynamoDB client
-const dynamoDbClient = new DynamoDBClient({ region: process.env.REGION });
+const AWS_REGION = process.env.REGION;
+const TABLE_NAME = process.env.MAIL_METADATA_TABLE_NAME;
+
+if (!AWS_REGION || !TABLE_NAME) {
+    throw new Error('Required environment variables are missing.');
+}
+
+const dynamoDbClient = new DynamoDBClient({ region: AWS_REGION });
 const docClient = DynamoDBDocumentClient.from(dynamoDbClient);
-const TABLE_NAME = process.env.MAIL_METADATA_TABLE_NAME || '';
 
-// Function to save mail to DynamoDB
-export async function saveMailToDynamoDB(mail: AnytimeMailBox) {
-    const params = {
-        TableName: TABLE_NAME,
-        Item: {
-            AnytimeMailBox: { S: 'AnytimeMailBox' },
-            ...mail,
-        },
-    };
+const PARTITION_KEY_NAME = 'ScrapPostCard';
 
-    try {
-        const command = new PutCommand(params);
-        await docClient.send(command);
-    } catch (error) {
-        console.error('Error saving mail to DynamoDB:', error);
+// Helper function to implement retry logic
+async function retryOperation(operation: () => Promise<void>, retries = 3, delay = 1000) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            await operation();
+            return; // Exit on success
+        } catch (error) {
+            if (error instanceof ProvisionedThroughputExceededException) {
+                // Log specific message for throughput issues
+                console.warn(`ProvisionedThroughputExceededException: ${error}`);
+            } else {
+                // Log general error message
+                console.warn(`Retrying operation due to error: ${error}`);
+            }
+
+            if (i === retries - 1) {
+                throw error; // Rethrow after last retry
+            }
+
+            // Exponential backoff
+            await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
+        }
     }
 }
 
-// Function to update mail in DynamoDB
-export async function updateMailInDynamoDB(mail: AnytimeMailBox) {
-    const params: UpdateCommandInput = {
-        TableName: TABLE_NAME,
-        Key: {
-            AnytimeMailBox: 'AnytimeMailBox',
-            malId: mail.malId,
-        },
-        UpdateExpression: `
-        set message = :message,
-            messageColor = :messageColor,
-            imageUrl = :imageUrl,
-            imageVersion = :imageVersion,
-            date = :date,
-            timeZoneText = :timeZoneText,
-            creationDate = :creationDate,
-            creationDate_utc = :creationDate_utc,
-            assignedDate = :assignedDate,
-            assignedDate_utc = :assignedDate_utc,
-            lastActionDate = :lastActionDate,
-            lastActionDate_utc = :lastActionDate_utc,
-            status = :status,
-            currentStatusId = :currentStatusId,
-            currentStatus = :currentStatus,
-            pastStatus = :pastStatus,
-            isNeedLoadDetail = :isNeedLoadDetail,
-            senderDetails = :senderDetails,
-            read = :read,
-            title = :title,
-            refKey = :refKey,
-            pages = :pages,
-            actions = :actions,
-            folder = :folder,
-            version = :version,
-            timestamp = :timestamp,
-            metadata = :metadata
-    `,
-        ExpressionAttributeValues: {
-            ':message': mail.message,
-            ':messageColor': mail.messageColor,
-            ':imageUrl': mail.imageUrl,
-            ':imageVersion': mail.imageVersion,
-            ':date': mail.date.toISOString(),
-            ':timeZoneText': mail.timeZoneText,
-            ':creationDate': mail.creationDate,
-            ':creationDate_utc': mail.creationDate_utc.toISOString(),
-            ':assignedDate': mail.assignedDate,
-            ':assignedDate_utc': mail.assignedDate_utc.toISOString(),
-            ':lastActionDate': mail.lastActionDate,
-            ':lastActionDate_utc': mail.lastActionDate_utc.toISOString(),
-            ':status': mail.status,
-            ':currentStatusId': mail.currentStatusId,
-            ':currentStatus': mail.currentStatus,
-            ':pastStatus': mail.pastStatus,
-            ':isNeedLoadDetail': mail.isNeedLoadDetail,
-            ':senderDetails': mail.senderDetails,
-            ':read': mail.read,
-            ':title': mail.title,
-            ':refKey': mail.refKey,
-            ':pages': mail.pages,
-            ':actions': mail.actions,
-            ':folder': mail.folder,
-            ':version': mail.version,
-            ':timestamp': mail.timestamp,
-            ':metadata': mail.metadata,
-        },
-        ReturnValues: 'UPDATED_NEW' as ReturnValue,
-    };
+// Helper function to create common attribute values
+const getAttributeValues = (mail: Mail) => ({
+    ':message': mail.message,
+    ':image_path': mail.image_path,
+    ':creationDate': mail.creationDate,
+    ':assignedDate': mail.assignedDate,
+    ':lastActionDate': mail.lastActionDate,
+});
 
-    try {
+// Function to save mail to DynamoDB
+export async function saveMailToDynamoDB(mail: Mail) {
+    await retryOperation(async () => {
+        const params = {
+            TableName: TABLE_NAME,
+            Item: {
+                [PARTITION_KEY_NAME]: PARTITION_KEY_NAME,
+                ...mail,
+            },
+        };
+        const command = new PutCommand(params);
+        await docClient.send(command);
+    });
+}
+
+// Function to update mail in DynamoDB
+export async function updateMailInDynamoDB(mail: Mail) {
+    await retryOperation(async () => {
+        const params: UpdateCommandInput = {
+            TableName: TABLE_NAME,
+            Key: {
+                [PARTITION_KEY_NAME]: PARTITION_KEY_NAME,
+                'any_mail_id': mail.any_mail_id
+            },
+            UpdateExpression: `
+                set #message = :message,
+                    #image_path = :image_path,
+                    #creationDate = :creationDate,
+                    #assignedDate = :assignedDate,
+                    #lastActionDate = :lastActionDate
+            `,
+            ExpressionAttributeValues: getAttributeValues(mail),
+            ExpressionAttributeNames: {
+                '#message': 'message',
+                '#image_path': 'image_path',
+                '#creationDate': 'creationDate',
+                '#assignedDate': 'assignedDate',
+                '#lastActionDate': 'lastActionDate',
+            },
+            ReturnValues: 'UPDATED_NEW',
+        };
+
         const command = new UpdateCommand(params);
         await docClient.send(command);
-    } catch (error) {
-        console.error('Error updating mail in DynamoDB:', error);
-    }
+    });
 }
 
 // Function to get mail from DynamoDB
@@ -110,15 +110,15 @@ export async function getMailFromDynamoDB(malId: number) {
     const params = {
         TableName: TABLE_NAME,
         Key: {
-            AnytimeMailBox: 'AnytimeMailBox',
-            malId: malId,
+            [PARTITION_KEY_NAME]: PARTITION_KEY_NAME,
+            'any_mail_id': malId
         },
     };
 
     try {
         const command = new GetCommand(params);
         const result = await docClient.send(command);
-        return result.Item as AnytimeMailBox | null;
+        return result.Item as Mail | null;
     } catch (error) {
         console.error('Error fetching mail from DynamoDB:', error);
         return null;
