@@ -1,6 +1,6 @@
-# Textract Mail Scanning Project
+# Mail Processing Project
 
-Welcome to Textract Mail Scanning project! This project uses the AWS Cloud Development Kit (CDK) with TypeScript to define and deploy AWS infrastructure.
+Welcome to Mail Processing project! This project uses the AWS Cloud Development Kit (CDK) with TypeScript to define and deploy AWS infrastructure.
 
 ## Project Overview
 

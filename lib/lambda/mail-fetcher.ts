@@ -1,7 +1,9 @@
-import {APIGatewayProxyHandlerV2} from 'aws-lambda';
-import puppeteer, {Page} from "puppeteer";
-import chromium from "@sparticuz/chromium";
-import {parse} from "date-fns";
+import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
+import puppeteer, { Page } from 'puppeteer';
+import chromium from '@sparticuz/chromium';
+import { parse } from 'date-fns';
+import { AnytimeMailBox } from './entry/mail';
+import { getMailFromDynamoDB, saveMailToDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
 
 const headers = {
     'accept': 'application/json',
@@ -9,11 +11,7 @@ const headers = {
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
 };
 
-async function loadMoreMails(page: Page, refTimestamp: number, sessionId: string): Promise<any[]> {
-    const cookies = {
-        'ASP.NET_SessionId': sessionId,
-    };
-
+async function loadMoreMails(page: Page, refTimestamp: number): Promise<AnytimeMailBox[]> {
     const data = {
         loadMenu: '1',
         refMalId: '0',
@@ -23,12 +21,12 @@ async function loadMoreMails(page: Page, refTimestamp: number, sessionId: string
     };
 
     try {
-        const response = await page.evaluate(async (data, headers, cookies) => {
+        const response = await page.evaluate(async (data, headers) => {
             const response = await fetch('https://packmail.anytimemailbox.com/app/mailbox-ajax/inbox', {
                 method: 'POST',
                 headers: new Headers(headers),
                 body: new URLSearchParams(data),
-                credentials: 'include', // Include cookies
+                credentials: 'include',
             } as RequestInit);
 
             if (!response.ok) {
@@ -36,7 +34,7 @@ async function loadMoreMails(page: Page, refTimestamp: number, sessionId: string
             }
 
             return response.json();
-        }, data, headers, cookies);
+        }, data, headers);
 
         return response.mail.items;
     } catch (error) {
@@ -45,13 +43,13 @@ async function loadMoreMails(page: Page, refTimestamp: number, sessionId: string
     }
 }
 
-async function getMailIds(page: Page, startDate: Date, endDate: Date, sessionId: string): Promise<any[]> {
-    let mailList: any[] = [];
+async function getMailIds(page: Page, startDate: Date, endDate: Date): Promise<AnytimeMailBox[]> {
+    const mailList: AnytimeMailBox[] = [];
     let refTimestamp = 0;
     let flag = true;
 
     while (flag) {
-        const mails = await loadMoreMails(page, refTimestamp, sessionId);
+        const mails = await loadMoreMails(page, refTimestamp);
 
         for (const mail of mails) {
             const assignedDate = parse(mail.assignedDate, 'MM/dd/yyyy', new Date());
@@ -59,7 +57,22 @@ async function getMailIds(page: Page, startDate: Date, endDate: Date, sessionId:
             const mailId = mail.malId;
 
             if (startDate <= assignedDate && assignedDate <= endDate) {
-                mailList.push({any_mail_id: mailId, assigned_date: assignedDate, last_action_date: lastActionDate});
+                const mailData: AnytimeMailBox = {
+                    ...mail
+                };
+
+                // Check if mail already exists
+                const existingMail = await getMailFromDynamoDB(mailId);
+
+                if (existingMail) {
+                    // Update existing mail
+                    await updateMailInDynamoDB(mailData);
+                } else {
+                    // Save new mail
+                    await saveMailToDynamoDB(mailData);
+                }
+
+                mailList.push(mailData);
             }
 
             if (lastActionDate < startDate) {
@@ -80,14 +93,13 @@ async function getMailIds(page: Page, startDate: Date, endDate: Date, sessionId:
     return mailList;
 }
 
-
 export const handler: APIGatewayProxyHandlerV2 = async (event) => {
-    const {startDate, endDate, anytimeAspNetSessionId} = JSON.parse(event.body || '{}');
+    const { startDate, endDate, anytimeAspNetSessionId } = JSON.parse(event.body || '{}');
 
     if (!startDate || !endDate || !anytimeAspNetSessionId) {
         return {
             statusCode: 400,
-            body: JSON.stringify({message: 'Missing required parameters'}),
+            body: JSON.stringify({ message: 'Missing required parameters' }),
         };
     }
 
@@ -105,20 +117,22 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
             value: anytimeAspNetSessionId,
             domain: 'packmail.anytimemailbox.com',
         });
-        const mailIds = await getMailIds(page, new Date(startDate), new Date(endDate), anytimeAspNetSessionId);
+        const mailIds = await getMailIds(page, new Date(startDate), new Date(endDate));
+
         console.log('Mail Length:', mailIds.length);
+
         await browser.close();
 
         return {
             statusCode: 200,
-            body: JSON.stringify({message: 'Emails are being processed successfully'}),
+            body: JSON.stringify({ message: 'Emails are being processed successfully' }),
         };
 
     } catch (error) {
         console.error('Error during Puppeteer execution:', error);
         return {
             statusCode: 500,
-            body: JSON.stringify({message: 'Internal server error', error: error}),
+            body: JSON.stringify({ message: 'Internal server error', error: error }),
         };
     }
 };
