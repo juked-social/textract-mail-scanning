@@ -49,6 +49,15 @@ Compile TypeScript code to JavaScript:
    ```bash
    npm run build
    ```
+
+Compile TypeScript code to JavaScript:
+
+### eslint run
+
+   ```bash
+   npm run lint
+   ```
+   
 ### Deployment
 To deploy your stack, use the `cdk deploy` command. This command will create or update the AWS resources defined in your CDK stack.
 
