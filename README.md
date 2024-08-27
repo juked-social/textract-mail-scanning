@@ -6,6 +6,10 @@ Welcome to Mail Processing project! This project uses the AWS Cloud Development 
 
 This repository contains an AWS CDK application written in TypeScript that automates the deployment of AWS resources. The application is configured through the `cdk.json` file, which guides the CDK Toolkit in executing the app.
 
+
+- Need to get the token from the website (https://packmail.anytimemailbox.com/app/home)
+- Go to Applications -> Cookies -> packmail.anytimemailbox.com -> ASP.NET_SessionId -> Value (ie. 554ke5b00xqr5dnmnxasim3t)
+
 ## Getting Started
 
 ### Prerequisites

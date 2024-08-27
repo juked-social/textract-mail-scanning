@@ -3,6 +3,7 @@ import { Page } from 'puppeteer';
 import { AnytimeMailBox, Mail, AnytimeMailPageInfo } from '../entry/mail';
 import { parse } from 'date-fns';
 import { getMailFromDynamoDB, saveMailToDynamoDB, updateMailInDynamoDB } from './mail-service';
+import {downloadAndSaveImage} from "./image-service";
 
 const headers = {
     'accept': 'application/json',
@@ -129,12 +130,12 @@ export async function getAnytimeMailPageInfo(page: Page, startDate: Date, endDat
         if (startDate <= assignedDate && assignedDate <= endDate) {
             const mailData = createMailObject(mail);
 
-            // // Generate a unique S3 key for the image
-            // const imageKey = `images/${mail.malId}.jpg`;
-            //
-            // // Download and save image to S3
-            // const updatedUrl = `https://packmail.anytimemailbox.com/imagestore/${mail.malId}.s800.jpg?s3`;
-            // mailData.image_path = await downloadAndSaveImage(page, updatedUrl, imageKey, cookies);
+            // Generate a unique S3 key for the image
+            const imageKey = `images/${mail.malId}.jpg`;
+
+            // Download and save image to S3
+            const updatedUrl = `https://packmail.anytimemailbox.com/imagestore/${mail.malId}.s800.jpg?s3`;
+            mailData.image_path = await downloadAndSaveImage(page, updatedUrl, imageKey, cookies, refTimestamp);
 
             console.log('Processing mail with timestamp:', mail.timestamp);
 
