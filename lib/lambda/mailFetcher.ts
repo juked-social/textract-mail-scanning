@@ -2,8 +2,13 @@ import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import puppeteer, { Browser, Page } from 'puppeteer';
 import chromium from '@sparticuz/chromium';
 import { parse } from 'date-fns';
+import { S3 } from 'aws-sdk';
 import { AnytimeMailBox, Mail } from './entry/mail';
-import { getMailFromDynamoDB, saveMailToDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
+
+const s3 = new S3({
+    region: process.env.REGION,
+});
+const bucketName = process.env.IMAGE_BUCKET_NAME; // The S3 bucket name
 
 // Define headers outside functions to avoid unnecessary object creation
 const headers = {
@@ -57,6 +62,30 @@ function createMailObject(mail: AnytimeMailBox): Mail {
     };
 }
 
+// Helper function to download an image and save it to S3
+async function downloadAndSaveImage(imageUrl: string, imageKey: string) {
+    try {
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+            throw new Error(`Failed to download image from ${imageUrl}`);
+        }
+        // @ts-ignore
+        const imageData = await response.buffer();
+
+        await s3.putObject({
+            Bucket: bucketName!,
+            Key: imageKey,
+            Body: imageData,
+            ContentType: 'image/jpeg', // Adjust based on actual content type
+        }).promise();
+
+        console.log(`Successfully saved image to S3 with key ${imageKey}`);
+    } catch (error) {
+        console.error(`Error saving image to S3: ${error}`);
+        throw error;
+    }
+}
+
 async function getMailIds(page: Page, startDate: Date, endDate: Date, cookies: {}): Promise<Mail[]> {
     const mailList: Mail[] = [];
     let refTimestamp = 0;
@@ -76,16 +105,14 @@ async function getMailIds(page: Page, startDate: Date, endDate: Date, cookies: {
 
                 console.log('Processing mail with timestamp:', mail.timestamp);
 
-                // Check if mail already exists
-                const existingMail = await getMailFromDynamoDB(mail.malId);
+                // Generate a unique S3 key for the image
+                const imageKey = `images/${mail.malId}.jpg`;
 
-                if (existingMail) {
-                    // Update existing mail
-                    await updateMailInDynamoDB(mailData);
-                } else {
-                    // Save new mail
-                    await saveMailToDynamoDB(mailData);
-                }
+                // Download and save image to S3
+                await downloadAndSaveImage(mail.imageUrl, imageKey);
+
+                // Update image path in DynamoDB to point to the S3 location
+                mailData.image_path = `s3://${bucketName}/${imageKey}`;
 
                 mailList.push(mailData);
             }
@@ -152,7 +179,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
             body: JSON.stringify({ message: 'Emails processed successfully' }),
         };
     } catch (error) {
-        console.error('Error during processed:', error);
+        console.error('Error during processing:', error);
         return {
             statusCode: 500,
             body: JSON.stringify({ message: 'Internal server error', error: error }),
