@@ -33,8 +33,8 @@ Before you begin, ensure you have the following installed:
 
 - **`bin/`**: Contains the entry point for your CDK application.
 - **`lib/`**: Contains the CDK stack definitions and AWS resources.
-- **`lambda/`**: Contains the AWS lambdas.
-- **`layer/`**: Contains the Layers for AWS lambdas.
+- **`lib/lambda/`**: Contains the AWS lambdas.
+- **`lib/layer/`**: Contains the Layers for AWS lambdas.
 - **`cdk.json`**: Configuration file for the CDK Toolkit.
 - **`package.json`**: Node.js project file with dependencies and scripts.
 - **`tsconfig.json`**: TypeScript configuration file.

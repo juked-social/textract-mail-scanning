@@ -1,3 +1,5 @@
+import { getAnytimeMailPageInfo } from '../handler/puppeteer-service';
+
 export type Mail = {
     any_mail_id: number,
     reason?: string,
@@ -43,4 +45,9 @@ export type AnytimeMailBox = {
     version: number,
     timestamp: number,
     metadata: null
+}
+
+export type AnytimeMailPageInfo = {
+    isLastPage: boolean,
+    refTimestamp: number
 }

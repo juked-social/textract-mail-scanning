@@ -6,8 +6,8 @@ import * as path from 'path';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
-import { StateMachine, Map, DefinitionBody } from 'aws-cdk-lib/aws-stepfunctions';
-import {NodejsFunction} from "aws-cdk-lib/aws-lambda-nodejs";
+import { StateMachine, Map, DefinitionBody, Choice, Condition, Pass, Chain, Wait } from 'aws-cdk-lib/aws-stepfunctions';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 
 export class MailProcessingStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -40,7 +40,7 @@ export class MailProcessingStack extends cdk.Stack {
         // Define the Lambda function
         const mailFetchingLambda = new NodejsFunction(this, 'MailFetcherLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
-            handler: 'mailFetcher.handler',
+            handler: 'mail-fetcher.handler',
             code: lambda.Code.fromAsset(path.join(__dirname, 'lambda')),
             layers: [layerChrome, layerDateFns],
             memorySize: 1024, // Set memory size to 1024 MB
@@ -78,6 +78,8 @@ export class MailProcessingStack extends cdk.Stack {
         mailMetadataTable.grantReadWriteData(textractLambda);
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
 
+        const elsePassStep = new Pass(this, 'else-block-pass');
+
         const completionLambda = new NodejsFunction(this, 'CompletionLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             handler: 'completion.handler',
@@ -92,8 +94,15 @@ export class MailProcessingStack extends cdk.Stack {
             outputPath: '$.Payload',
         });
 
+        const mailFetchingTaskNext = new LambdaInvoke(this, 'MailFetchingTaskNext', {
+            lambdaFunction: mailFetchingLambda,
+            inputPath: '$',
+            outputPath: '$.Payload',
+        });
+
         const s3ProcessingTask = new LambdaInvoke(this, 'S3ProcessingTask', {
             lambdaFunction: s3ProcessingLambda,
+            inputPath: '$',
             outputPath: '$.Payload',
         });
 
@@ -115,7 +124,13 @@ export class MailProcessingStack extends cdk.Stack {
             outputPath: '$.Payload',
         });
 
+        const choiceState = new Choice(this, 'ChoiceState')
+            .when(Condition.booleanEquals('$.toNextPage', true), mailFetchingTaskNext)
+            .otherwise(elsePassStep)
+            .afterwards();
+
         const definition = mailFetchingTask
+            .next(choiceState)
             .next(s3ProcessingTask)
             .next(textractMapTask)
             .next(completionTask);
