@@ -1,9 +1,19 @@
-import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import puppeteer from 'puppeteer';
 import chromium from '@sparticuz/chromium';
-import { getAnytimeMailPageInfo } from './handler/puppeteer-service';
+import { downloadImages, getAnytimeMailPageInfo } from './handler/puppeteer-service';
 
-export const handler: APIGatewayProxyHandlerV2 = async (event) => {
+interface EventBody {
+    startDate: string;
+    endDate: string;
+    anytimeAspNetSessionId: string;
+    refTimestamp?: string;
+}
+
+interface LambdaEvent {
+    body: string | EventBody;
+}
+
+export const handler = async (event: LambdaEvent) => {
     const body = typeof event.body === 'string' ? JSON.parse(event.body || '{}') : event.body;
 
     const { startDate, endDate, anytimeAspNetSessionId, refTimestamp = '0' } = body;
@@ -45,6 +55,8 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
             cookies,
             Number(refTimestamp)
         );
+
+        await downloadImages(page, anytimeMailPageInfo.mailList);
 
         return {
             statusCode: 200,
