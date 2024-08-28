@@ -5,7 +5,7 @@ const s3 = new S3Client({ region: process.env.REGION });
 const bucketName = process.env.IMAGE_BUCKET_NAME; // The S3 bucket name
 
 // Helper function to download an image and save it to S3
-export async function downloadAndSaveImage(page: Page, imageUrl: string, imageKey: string, cookies: {}) {
+export async function downloadAndSaveImage(page: Page, imageUrl: string, imageKey: string) {
     try {
         await page.goto(imageUrl, { waitUntil: 'networkidle2' });
 
@@ -19,7 +19,7 @@ export async function downloadAndSaveImage(page: Page, imageUrl: string, imageKe
         // // @ts-ignore
         // const imageData = await response.buffer();
 
-        const imageData = Buffer.from(await response.arrayBuffer());
+        const imageData = await response.arrayBuffer();
 
         // Upload the image to S3
         const command = new PutObjectCommand({

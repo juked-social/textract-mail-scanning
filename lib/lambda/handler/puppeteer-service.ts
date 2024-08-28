@@ -3,6 +3,7 @@ import { Page } from 'puppeteer';
 import { AnytimeMailBox, Mail, AnytimeMailPageInfo } from '../entry/mail';
 import { parse } from 'date-fns';
 import { getMailFromDynamoDB, saveMailToDynamoDB, updateMailInDynamoDB } from './mail-service';
+import { downloadAndSaveImage } from './image-service';
 
 const headers = {
     'accept': 'application/json',
@@ -16,9 +17,9 @@ function createMailObject(mail: AnytimeMailBox): Mail {
         any_mail_id: mail.malId,
         message: mail.message,
         image_path: mail.imageUrl,
-        creationDate: mail.creationDate,
-        assignedDate: mail.assignedDate,
-        lastActionDate: mail.lastActionDate,
+        creationDate: new Date(mail.creationDate).toISOString(),
+        assignedDate: new Date(mail.assignedDate).toISOString(),
+        lastActionDate: new Date(mail.lastActionDate).toISOString(),
     };
 }
 
@@ -57,68 +58,10 @@ async function fetchMails(page: Page, refTimestamp: number, cookies: {}): Promis
     }
 }
 
-export async function getMailIds(page: Page, startDate: Date, endDate: Date, cookies: {}): Promise<Mail[]> {
-    const mailList: Mail[] = [];
-    let refTimestamp = 0;
-    let flag = true;
-
-    while (flag) {
-        const mails = await fetchMails(page, refTimestamp, cookies);
-
-        const mailPromises = mails.map(async (mail) => {
-            const assignedDate = parse(mail.assignedDate, 'MM/dd/yyyy', new Date());
-            const lastActionDate = parse(mail.lastActionDate, 'MM/dd/yyyy', new Date());
-
-            if (startDate <= assignedDate && assignedDate <= endDate) {
-                const mailData = createMailObject(mail);
-
-                // // Generate a unique S3 key for the image
-                // const imageKey = `images/${mail.malId}.jpg`;
-                //
-                // // Download and save image to S3
-                // const updatedUrl = `https://packmail.anytimemailbox.com/imagestore/${mail.malId}.s800.jpg?s3`;
-                // mailData.image_path = await downloadAndSaveImage(page, updatedUrl, imageKey, cookies);
-
-                console.log('Processing mail with timestamp:', mail.timestamp);
-                //
-                // // Check if mail already exists
-                // const existingMail = await getMailFromDynamoDB(mail.malId);
-                //
-                // if (existingMail) {
-                //     // Update existing mail
-                //     await updateMailInDynamoDB(mailData);
-                // } else {
-                //     // Save new mail
-                //     await saveMailToDynamoDB(mailData);
-                // }
-
-                mailList.push(mailData);
-            }
-
-            if (lastActionDate < startDate) {
-                flag = false;
-                return;
-            }
-        });
-
-        await Promise.all(mailPromises);
-
-        if (mails.length === 0) {
-            flag = false;
-        }
-
-        if (mails.length > 0 && refTimestamp != mails[mails.length - 1].timestamp) {
-            refTimestamp = mails[mails.length - 1].timestamp;
-        }
-    }
-
-    return mailList;
-}
-
-
 export async function getAnytimeMailPageInfo(page: Page, startDate: Date, endDate: Date, cookies: {}, timestamp: number): Promise<AnytimeMailPageInfo> {
     let refTimestamp = timestamp;
     let isLastPage = false;
+    const mailList: Mail[] = [];
 
     const mails = await fetchMails(page, refTimestamp, cookies);
 
@@ -128,15 +71,6 @@ export async function getAnytimeMailPageInfo(page: Page, startDate: Date, endDat
 
         if (startDate <= assignedDate && assignedDate <= endDate) {
             const mailData = createMailObject(mail);
-
-            // // Generate a unique S3 key for the image
-            // const imageKey = `images/${mail.malId}.jpg`;
-            //
-            // // Download and save image to S3
-            // const updatedUrl = `https://packmail.anytimemailbox.com/imagestore/${mail.malId}.s800.jpg?s3`;
-            // mailData.image_path = await downloadAndSaveImage(page, updatedUrl, imageKey, cookies);
-
-            console.log('Processing mail with timestamp:', mail.timestamp);
 
             // Check if mail already exists
             const existingMail = await getMailFromDynamoDB(mail.malId);
@@ -148,6 +82,8 @@ export async function getAnytimeMailPageInfo(page: Page, startDate: Date, endDat
                 // Save new mail
                 await saveMailToDynamoDB(mailData);
             }
+
+            mailList.push(mailData);
         }
 
         if (lastActionDate < startDate) {
@@ -168,6 +104,25 @@ export async function getAnytimeMailPageInfo(page: Page, startDate: Date, endDat
 
     return {
         isLastPage,
-        refTimestamp
+        refTimestamp,
+        mailList
     };
 }
+
+
+export const downloadImages = async (page: Page, mailList: Mail[]) => {
+    try{
+        for (const mail of mailList) {
+            // Generate a unique S3 key for the image
+            const imageKey = `images/${mail.assignedDate.split('T')[0]}/card_${mail.any_mail_id}.jpg`;
+
+            // Download and save image to S3
+            const updatedUrl = `https://packmail.anytimemailbox.com/imagestore/${mail.any_mail_id}.s800.jpg?s3`;
+            const updatedMail = { ...mail, image_path: await downloadAndSaveImage(page, updatedUrl, imageKey) };
+
+            await updateMailInDynamoDB(updatedMail);
+        }
+    } catch (error){
+        console.error(`Error saving image: ${error}`);
+    }
+};

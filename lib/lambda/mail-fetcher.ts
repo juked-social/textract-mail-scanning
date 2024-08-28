@@ -1,9 +1,19 @@
-import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import puppeteer from 'puppeteer';
 import chromium from '@sparticuz/chromium';
-import { getAnytimeMailPageInfo } from './handler/puppeteer-service';
+import { downloadImages, getAnytimeMailPageInfo } from './handler/puppeteer-service';
 
-export const handler: APIGatewayProxyHandlerV2 = async (event) => {
+interface EventBody {
+    startDate: string;
+    endDate: string;
+    anytimeAspNetSessionId: string;
+    refTimestamp?: string;
+}
+
+interface LambdaEvent {
+    body: string | EventBody;
+}
+
+export const handler = async (event: LambdaEvent) => {
     const body = typeof event.body === 'string' ? JSON.parse(event.body || '{}') : event.body;
 
     const { startDate, endDate, anytimeAspNetSessionId, refTimestamp = '0' } = body;
@@ -20,7 +30,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     const browser = await puppeteer.launch({
         args: chromium.args,
         defaultViewport: chromium.defaultViewport,
-        executablePath: await chromium.executablePath(),
+        executablePath: await chromium.executablePath('/opt/nodejs/node_modules/@sparticuz/chromium/bin'),
         headless: true,
     });
 
@@ -39,20 +49,24 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
             'ASP.NET_SessionId': anytimeAspNetSessionId
         };
 
-        console.log('getting mails');
+        const anytimeMailPageInfo = await getAnytimeMailPageInfo(page,
+            new Date(startDate),
+            new Date(endDate),
+            cookies,
+            Number(refTimestamp)
+        );
 
-        const anytimeMailPageInfo = await getAnytimeMailPageInfo(page, new Date(startDate), new Date(endDate), cookies, Number(refTimestamp));
+        await downloadImages(page, anytimeMailPageInfo.mailList);
 
         return {
             statusCode: 200,
-            body: JSON.stringify(
-                {
-                    toNextPage: !anytimeMailPageInfo.isLastPage && Number(refTimestamp) !== anytimeMailPageInfo.refTimestamp,
-                    refTimestamp: anytimeMailPageInfo.refTimestamp,
-                    startDate,
-                    endDate,
-                    anytimeAspNetSessionId,
-                }),
+            body: {
+                toNextPage: !anytimeMailPageInfo.isLastPage && Number(refTimestamp) !== anytimeMailPageInfo.refTimestamp,
+                refTimestamp: anytimeMailPageInfo.refTimestamp,
+                startDate,
+                endDate,
+                anytimeAspNetSessionId,
+            },
         };
     } catch (error) {
         console.error('Error during processing:', error);

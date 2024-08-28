@@ -8,8 +8,10 @@ import {
     GetCommand,
     PutCommand,
     UpdateCommand,
-    UpdateCommandInput
+    UpdateCommandInput,
+    ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { unmarshall } from '@aws-sdk/util-dynamodb';
 
 // Initialize DynamoDB client
 const AWS_REGION = process.env.REGION;
@@ -122,5 +124,26 @@ export async function getMailFromDynamoDB(malId: number) {
     } catch (error) {
         console.error('Error fetching mail from DynamoDB:', error);
         return null;
+    }
+}
+
+// Function to get mail by date range
+export async function getMailByDates(startDate: string, endDate: string): Promise<Mail[]> {
+    const params = {
+        TableName: TABLE_NAME,
+        FilterExpression: 'assignedDate BETWEEN :startDate AND :endDate',
+        ExpressionAttributeValues: {
+            ':startDate': startDate,
+            ':endDate': endDate,
+        },
+    };
+
+    try {
+        const command = new ScanCommand(params);
+        const data = await docClient.send(command);
+        return data.Items as Mail[] || [];
+    } catch (error) {
+        console.error('Error querying items from DynamoDB:', error);
+        return [];
     }
 }

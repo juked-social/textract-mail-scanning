@@ -6,7 +6,16 @@ import * as path from 'path';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
-import { StateMachine, Map, DefinitionBody, Choice, Condition, Pass, Chain, Wait } from 'aws-cdk-lib/aws-stepfunctions';
+import {
+    StateMachine,
+    Map,
+    DefinitionBody,
+    Choice,
+    Condition,
+    Chain,
+    Wait,
+    WaitTime
+} from 'aws-cdk-lib/aws-stepfunctions';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 
 export class MailProcessingStack extends cdk.Stack {
@@ -40,8 +49,7 @@ export class MailProcessingStack extends cdk.Stack {
         // Define the Lambda function
         const mailFetchingLambda = new NodejsFunction(this, 'MailFetcherLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
-            handler: 'mail-fetcher.handler',
-            code: lambda.Code.fromAsset(path.join(__dirname, 'lambda')),
+            entry: path.join(__dirname, 'lambda', 'mail-fetcher.ts'),
             layers: [layerChrome, layerDateFns],
             memorySize: 1024, // Set memory size to 1024 MB
             timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
@@ -51,22 +59,24 @@ export class MailProcessingStack extends cdk.Stack {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
             },
+            bundling: {
+                externalModules: ['aws-sdk', '@sparticuz/chromium'] // Add any external modules here
+            },
         });
 
         const s3ProcessingLambda = new NodejsFunction(this, 'S3ProcessingLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
-            handler: 's3-processor.handler',
-            code: lambda.Code.fromAsset(path.join(__dirname, 'lambda')),
+            entry: path.join(__dirname, 'lambda', 's3-processor.ts'),
             environment: {
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
+                MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
             },
         });
 
         const textractLambda = new NodejsFunction(this, 'TextractLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
-            handler: 'textract.handler',
-            code: lambda.Code.fromAsset(path.join(__dirname, 'lambda')),
+            entry: path.join(__dirname, 'lambda', 'textract.ts'),
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
@@ -75,15 +85,14 @@ export class MailProcessingStack extends cdk.Stack {
 
         imageBucket.grantReadWrite(mailFetchingLambda);
         imageBucket.grantRead(s3ProcessingLambda);
+        imageBucket.grantRead(textractLambda);
         mailMetadataTable.grantReadWriteData(textractLambda);
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
-
-        const elsePassStep = new Pass(this, 'else-block-pass');
+        mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
 
         const completionLambda = new NodejsFunction(this, 'CompletionLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
-            handler: 'completion.handler',
-            code: lambda.Code.fromAsset(path.join(__dirname, 'lambda')),
+            entry: path.join(__dirname, 'lambda', 'completion.ts'),
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
             },
@@ -91,12 +100,6 @@ export class MailProcessingStack extends cdk.Stack {
 
         const mailFetchingTask = new LambdaInvoke(this, 'MailFetchingTask', {
             lambdaFunction: mailFetchingLambda,
-            outputPath: '$.Payload',
-        });
-
-        const mailFetchingTaskNext = new LambdaInvoke(this, 'MailFetchingTaskNext', {
-            lambdaFunction: mailFetchingLambda,
-            inputPath: '$',
             outputPath: '$.Payload',
         });
 
@@ -124,24 +127,33 @@ export class MailProcessingStack extends cdk.Stack {
             outputPath: '$.Payload',
         });
 
-        const choiceState = new Choice(this, 'ChoiceState')
-            .when(Condition.booleanEquals('$.toNextPage', true), mailFetchingTaskNext)
-            .otherwise(elsePassStep)
+        const checkMorePages = new Choice(this, 'CheckIfMorePages')
+            .when(Condition.booleanEquals('$.body.toNextPage', true),
+                new Wait(this, 'wait', { time: WaitTime.duration(cdk.Duration.seconds(5)) }).next(mailFetchingTask))
+            .otherwise(s3ProcessingTask)
             .afterwards();
 
-        const definition = mailFetchingTask
-            .next(choiceState)
-            .next(s3ProcessingTask)
+        const mailFetchingChain = Chain.sequence(mailFetchingTask.next(checkMorePages), s3ProcessingTask);
+
+        const definition = mailFetchingChain
             .next(textractMapTask)
             .next(completionTask);
 
         // Create the State Machine
-        new StateMachine(this, 'MailProcessingStateMachine', {
+        const stateMachine = new StateMachine(this, 'MailProcessingStateMachine', {
             definitionBody: DefinitionBody.fromChainable(definition),
-            timeout: cdk.Duration.minutes(15),
+            timeout: cdk.Duration.minutes(120),
         });
 
-        // Grant the Lambda function permissions to write to the DynamoDB table
+        // Define the Trigger Lambda function
+        const triggerLambda = new NodejsFunction(this, 'TriggerLambda', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            entry: path.join(__dirname, 'lambda', 'trigger.ts'),
+            environment: {
+                STATE_MACHINE_ARN: stateMachine.stateMachineArn,
+            },
+        });
+        stateMachine.grantStartExecution(triggerLambda);
 
         // Define the API Gateway
         const api = new apigateway.RestApi(this, 'MailProcessingApi', {
@@ -151,6 +163,6 @@ export class MailProcessingStack extends cdk.Stack {
 
         // Create a resource and method for the API
         const mails = api.root.addResource('mails');
-        mails.addMethod('POST', new apigateway.LambdaIntegration(mailFetchingLambda));
+        mails.addMethod('POST', new apigateway.LambdaIntegration(triggerLambda));
     }
 }
