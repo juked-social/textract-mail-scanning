@@ -17,6 +17,7 @@ import {
     WaitTime
 } from 'aws-cdk-lib/aws-stepfunctions';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import {PolicyStatement} from "aws-cdk-lib/aws-iam";
 
 export class MailProcessingStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -89,6 +90,12 @@ export class MailProcessingStack extends cdk.Stack {
         mailMetadataTable.grantReadWriteData(textractLambda);
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
         mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
+
+        // Grant textract lambda permission to textract
+        textractLambda.addToRolePolicy(new PolicyStatement({
+            actions: ['textract:*'],
+            resources: ['*'],
+        }));
 
         const completionLambda = new NodejsFunction(this, 'CompletionLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,

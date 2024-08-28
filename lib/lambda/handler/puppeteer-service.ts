@@ -111,7 +111,7 @@ export async function getAnytimeMailPageInfo(page: Page, startDate: Date, endDat
 
 
 export const downloadImages = async (page: Page, mailList: Mail[]) => {
-    try{
+    try {
         for (const mail of mailList) {
             // Generate a unique S3 key for the image
             const imageKey = `images/${mail.assignedDate.split('T')[0]}/card_${mail.any_mail_id}.jpg`;
