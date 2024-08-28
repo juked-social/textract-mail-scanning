@@ -22,7 +22,8 @@ export const handler = async (event: any) => {
         }
     };
 
-    const textractData = await textract.analyzeDocument(textractParams).promise();
+    // const textractData = await textract.analyzeDocument(textractParams).promise();
+    const textractData = '';
 
     // Check if mail already exists
     const mail = await getMailFromDynamoDB(image.any_mail_id);
