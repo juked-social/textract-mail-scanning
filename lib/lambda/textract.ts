@@ -1,47 +1,15 @@
-// import { getMailFromDynamoDB, saveMailToDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
-// import { AnytimeMailBox, Mail } from './entry/mail';
-import { AnalyzeDocumentRequest, FeatureType } from 'aws-sdk/clients/textract';
-import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { TextractClient } from '@aws-sdk/client-textract';
+import { S3Client } from '@aws-sdk/client-s3';
+import {
+    AnalyzeDocumentCommand, AnalyzeDocumentCommandInput,
+    QueriesConfig,
+    TextractClient,
+    FeatureType, AnalyzeDocumentCommandOutput
+} from '@aws-sdk/client-textract';
+import { S3UrlParts, TextractInterface, TextractInterfaceQuery } from './entry/textract';
 
 const textractClient = new TextractClient({ region: process.env.REGION });
 const tableName = process.env.MAIL_METADATA_TABLE_NAME;
 const s3Client = new S3Client({ region: process.env.REGION });
-
-interface TextractInterface {
-    manifest: {
-        s3Path: string;
-    },
-    mime: string;
-    classification: string;
-    numberOfPages: number;
-    fileSize: number;
-    Payload: {
-        Payload: {
-            manifest: {
-                s3_path: string;
-                textract_features: FeatureType[];
-                queries_config: AnalyzeDocumentRequest[];
-                classification: string;
-                numberOfPages: number;
-                fileSize: number;
-            },
-            mime: string;
-        },
-        ExecutedVersion: string;
-
-    },
-    textract_result: {
-        TextractTempOutputJsonPath: string;
-    },
-    StatusCode: number;
-}
-
-interface S3UrlParts {
-    bucket: string;
-    key: string;
-}
 
 function splitS3Url(s3Url: string): S3UrlParts {
     // Ensure the URL starts with the expected S3 prefix
@@ -79,28 +47,117 @@ function extractCardValue(s3Url: string): string {
     return '';
 }
 
+function createQueriesConfig(queriesConfigItems: TextractInterfaceQuery[]): QueriesConfig {
+    return {
+        Queries: queriesConfigItems?.map((query) => ({ Text: query.text, Alias: query.alies })) || []
+    };
+}
+
+function parseTextractResponse(
+    response: AnalyzeDocumentCommandOutput,
+    queriesConfigItems: TextractInterfaceQuery[]
+) {
+    if(!response?.Blocks) {
+        return null;
+    }
+
+    const queries: { text: string, resultId: string }[] = [];
+    const results: {[key:string]: { text: string, confidence: number }} = {};
+    const configs: { [key: string]: string } = {};
+    queriesConfigItems.map(q => configs[q.text] = q.alies);
+
+    console.log(queriesConfigItems);
+
+    // Create a map for QUERY blocks
+    response.Blocks.forEach(block => {
+        if (block.BlockType === 'QUERY') {
+            queries.push({
+                text: block.Query?.Text || '',
+                resultId: block.Relationships?.find(r => r.Type === 'ANSWER')?.Ids?.[0] || ''
+            });
+        }
+    });
+
+    // Create a map for QUERY_RESULT blocks
+    response.Blocks.forEach(block => {
+        if (block.BlockType === 'QUERY_RESULT' && block.Id) {
+            results[block.Id] = {
+                text: block.Text || '',
+                confidence: block.Confidence || 0
+            };
+        }
+    });
+
+    // Combine QUERY and QUERY_RESULT
+    const combinedResults: {[key:string]: { text: string, confidence: number }} = {};
+    queries.map(query => {
+        const result = results[query.resultId];
+
+        if (result && query?.text) {
+            combinedResults[query.text] = {
+                text: result.text,
+                confidence: result.confidence
+            };
+        }
+    });
+
+    return combinedResults;
+}
+
+// Function to analyze document with queries
+async function analyzeDocumentWithQueries(
+    bucket: string,
+    key: string,
+    featureTypes: FeatureType[],
+    queriesConfigItems: TextractInterfaceQuery[]
+) {
+    const documentLocation = { S3Object: { Bucket: bucket, Name: key } };
+
+    const input: AnalyzeDocumentCommandInput = {
+        Document: documentLocation,
+        FeatureTypes: featureTypes,
+        QueriesConfig: createQueriesConfig(queriesConfigItems),
+    };
+
+    const command = new AnalyzeDocumentCommand(input);
+    const result = await textractClient.send(command);
+
+    console.log(result);
+
+    return parseTextractResponse(result, queriesConfigItems);
+}
 
 export const handler = async (event: TextractInterface) => {
-    const mail = {};
-
     // Get the textract output from s3
     //       "s3Path": "s3://mailprocessingstack-mailimagebucket2feb9a43-x1ra2lv4z2yf/images/2024-08-27/card_18464977.jpg"
     const originalFilePath = event.manifest.s3Path;
     const anyMailId = extractCardValue(originalFilePath);
 
     // s3://mailprocessingstack-mailimagebucket2feb9a43-x1ra2lv4z2yf/mail-textract-temp-output/449172b95ec868ef103e76ea20c59b15bbac2612fd1d131f8e7613e11607328d
-    const textractOutput = splitS3Url(event.textract_result.TextractTempOutputJsonPath);
-    const textractOutputBucket = textractOutput.bucket;
-    const textractOutputKey = textractOutput.key;
 
-    const s3Command = new GetObjectCommand({
-        Bucket: textractOutputBucket,
-        Key: textractOutputKey
-    });
+    const { bucket, key } = splitS3Url(originalFilePath);
 
-    const textractResponse = await s3Client.send(s3Command);
+    // Analyze document with queries
+    const analysisResult = await analyzeDocumentWithQueries(bucket,
+        key,
+        event.Payload.Payload.manifest.textract_features,
+        event.Payload.Payload.manifest.queries_config);
 
-    console.log(textractResponse, 'textractResponse');
+    console.info('Textract analysis result:', JSON.stringify(analysisResult));
+
+    // const textractOutput = splitS3Url(event.textract_result.TextractTempOutputJsonPath);
+    // const textractOutputBucket = textractOutput.bucket;
+    // const textractOutputKey = textractOutput.key;
+    //
+    // const s3Command = new GetObjectCommand({
+    //     Bucket: textractOutputBucket,
+    //     Key: `${textractOutputKey}/1`
+    // });
+    //
+    // const textractResponse = await s3Client.send(s3Command);
+    //
+    // console.log(textractResponse);
+
     // We will need to parse the textract output and extract the required information
 
     // Update the mail record with textract output

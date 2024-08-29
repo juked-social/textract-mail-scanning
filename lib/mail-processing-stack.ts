@@ -92,7 +92,6 @@ export class MailProcessingStack extends cdk.Stack {
         });
 
         imageBucket.grantReadWrite(mailFetchingLambda);
-        imageBucket.grantRead(s3ProcessingLambda);
         imageBucket.grantRead(textractLambda);
         mailMetadataTable.grantReadWriteData(textractLambda);
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
