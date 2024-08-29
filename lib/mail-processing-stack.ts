@@ -5,6 +5,8 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as path from 'path';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
+import { Code, Runtime, Function, Architecture } from 'aws-cdk-lib/aws-lambda';
+
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import {
     StateMachine,
@@ -14,14 +16,18 @@ import {
     Condition,
     Chain,
     Wait,
-    WaitTime
+    WaitTime, IntegrationPattern, TaskInput, JsonPath
 } from 'aws-cdk-lib/aws-stepfunctions';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
-import {PolicyStatement} from "aws-cdk-lib/aws-iam";
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { TextractGenericAsyncSfnTask, TextractPOCDecider } from 'amazon-textract-idp-cdk-constructs';
+import { Duration } from 'aws-cdk-lib';
 
 export class MailProcessingStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
+
+        const S3_TEMP_OUTPUT_PREFIX = 'mail-textract-temp-output';
 
         const imageBucket = new Bucket(this, 'MailImageBucket', {
             removalPolicy: cdk.RemovalPolicy.DESTROY, // Only for dev environments
@@ -82,6 +88,7 @@ export class MailProcessingStack extends cdk.Stack {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
             },
+            timeout: cdk.Duration.minutes(2),
         });
 
         imageBucket.grantReadWrite(mailFetchingLambda);
@@ -97,6 +104,7 @@ export class MailProcessingStack extends cdk.Stack {
             resources: ['*'],
         }));
 
+        // We will then click delete on the mail website.
         const completionLambda = new NodejsFunction(this, 'CompletionLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'completion.ts'),
@@ -116,26 +124,74 @@ export class MailProcessingStack extends cdk.Stack {
             outputPath: '$.Payload',
         });
 
-        const textractMapTask = new Map(this, 'TextractMapTask', {
-            maxConcurrency: 10, // Adjust concurrency as needed
-            itemsPath: '$.images',
-            itemSelector: {
-                'image.$': '$$.Map.Item.Value',
+        const addQueriesFunction = new Function(
+            this,
+            'addQueriesFunction',
+            {
+                runtime: Runtime.PYTHON_3_9,
+                handler: 'index.lambda_handler',
+                code: Code.fromAsset(
+                    path.join(__dirname, 'lambda/add-queries/app'),
+                ),
+                architecture: Architecture.X86_64,
+                timeout: Duration.seconds(30),
             },
-        }).itemProcessor(
-            new LambdaInvoke(this, 'TextractTask', {
-                lambdaFunction: textractLambda,
-                outputPath: '$.Payload',
-            })
         );
+
+        const textractAsyncTask = new TextractGenericAsyncSfnTask(
+            this,
+            'TextractAsync',
+            {
+                s3OutputBucket: imageBucket.bucketName,
+                s3TempOutputPrefix: S3_TEMP_OUTPUT_PREFIX,
+                integrationPattern: IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+                lambdaLogLevel: 'DEBUG',
+                lambdaTimeout: 900,
+                input: TaskInput.fromObject({
+                    Token: JsonPath.taskToken,
+                    ExecutionId: JsonPath.stringAt('$$.Execution.Id'),
+                    Payload: JsonPath.entirePayload,
+                }),
+                resultPath: '$.textract_result',
+            },
+        );
+
+        const addQueriesTask = new LambdaInvoke(
+            this,
+            'AddQueries',
+            {
+                lambdaFunction: addQueriesFunction,
+                resultPath: '$.Payload',
+            },
+        );
+
+        const afterTextractTask = new LambdaInvoke(this, 'TextractTask', {
+            lambdaFunction: textractLambda,
+            outputPath: '$.Payload',
+        });
 
         const completionTask = new LambdaInvoke(this, 'CompletionTask', {
             lambdaFunction: completionLambda,
             outputPath: '$.Payload',
         });
 
+        const textractDecider = new TextractPOCDecider(this, 'TextractDeciderChainStart', {});
+
+        // This allows us to get each s3 image and then process it with textract, then write it to dynamodb
+        const textractChain = Chain.start(textractDecider).next(addQueriesTask).next(textractAsyncTask).next(afterTextractTask);
+
+        const textractMapTask = new Map(this, 'TextractMapTask', {
+            maxConcurrency: 10,
+            itemsPath: '$.images',
+            itemSelector: {
+                's3Path.$': '$$.Map.Item.Value.s3Key', // Fix to set s3Path to s3Key
+            },
+        }).itemProcessor(
+            textractChain
+        );
+
         const checkMorePages = new Choice(this, 'CheckIfMorePages')
-            .when(Condition.booleanEquals('$.body.toNextPage', true),
+            .when(Condition.booleanEquals('$.body.toNextPage', false),
                 new Wait(this, 'wait', { time: WaitTime.duration(cdk.Duration.seconds(5)) }).next(mailFetchingTask))
             .otherwise(s3ProcessingTask)
             .afterwards();
@@ -162,7 +218,6 @@ export class MailProcessingStack extends cdk.Stack {
         });
         stateMachine.grantStartExecution(triggerLambda);
 
-        // Define the API Gateway
         const api = new apigateway.RestApi(this, 'MailProcessingApi', {
             restApiName: 'Mail Processing Service',
             description: 'This service automates the process of downloading, processing, validating, and uploading mail data from Anytime Mailbox',

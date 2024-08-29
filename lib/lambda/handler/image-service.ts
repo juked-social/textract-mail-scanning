@@ -16,8 +16,6 @@ export async function downloadAndSaveImage(page: Page, imageUrl: string, imageKe
         if (!response.ok) {
             throw new Error(`Failed to download image from ${imageUrl}`);
         }
-        // // @ts-ignore
-        // const imageData = await response.buffer();
 
         const imageData = await response.arrayBuffer();
 

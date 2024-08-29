@@ -1,0 +1,9 @@
+{
+  "manifest": {
+    "s3Path": "s3://ibp-textract-dev01-sourcelayer/FORD_OFFICE_PROJECT/Shred-Returned Regular Mail-103.pdf"
+  },
+  "mime": "application/pdf",
+  "classification": null,
+  "numberOfPages": 2,
+  "fileSize": 292628
+}
