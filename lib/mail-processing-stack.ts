@@ -53,6 +53,11 @@ export class MailProcessingStack extends cdk.Stack {
             compatibleRuntimes: [lambda.Runtime.NODEJS_18_X],
         });
 
+        const layerSharp = new lambda.LayerVersion(this, 'SharpLayer', {
+            code: lambda.Code.fromAsset(path.join(__dirname, 'layer/sharp/sharp.zip')),
+            compatibleRuntimes: [lambda.Runtime.NODEJS_18_X],
+        });
+
         // Define the Lambda function
         const mailFetchingLambda = new NodejsFunction(this, 'MailFetcherLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
@@ -81,22 +86,75 @@ export class MailProcessingStack extends cdk.Stack {
             },
         });
 
+        const rotateImageLambda = new NodejsFunction(this, 'TextractDeciderLambda', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            entry: path.join(__dirname, 'lambda', 'rotate-image.ts'),
+            layers: [layerSharp],
+            memorySize: 1024, // Set memory size to 1024 MB
+            timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
+            environment: {
+                IMAGE_BUCKET_NAME: imageBucket.bucketName,
+                MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
+                REGION: this.region,
+            },
+            bundling: {
+                nodeModules: ['sharp'],
+                forceDockerBundling: true,
+            }
+        });
+
         const textractLambda = new NodejsFunction(this, 'TextractLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'textract.ts'),
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
+                BEDROCK_MODEL_ID: 'amazon.titan-text-express-v1',
+                OPENAI_API_KEY: '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',
             },
             timeout: cdk.Duration.minutes(2),
         });
 
+        const textractAsyncTask = new TextractGenericAsyncSfnTask(
+            this,
+            'TextractAsync',
+            {
+                s3OutputBucket: imageBucket.bucketName,
+                s3TempOutputPrefix: S3_TEMP_OUTPUT_PREFIX,
+                integrationPattern: IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+                lambdaLogLevel: 'DEBUG',
+                lambdaTimeout: 900,
+                input: TaskInput.fromObject({
+                    Token: JsonPath.taskToken,
+                    ExecutionId: JsonPath.stringAt('$$.Execution.Id'),
+                    Payload: JsonPath.entirePayload,
+                }),
+                resultPath: '$.textract_result',
+            },
+        );
+
+        const completionLambda = new NodejsFunction(this, 'CompletionLambda', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            entry: path.join(__dirname, 'lambda', 'completion.ts'),
+            memorySize: 1024, // Set memory size to 1024 MB
+            timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
+            environment: {
+                MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
+                TEMP_BUCKET_NAME: imageBucket.bucketName,
+                TEMP_TABLE_NAME: textractAsyncTask.taskTokenTableName,
+                REGION: this.region,
+                S3_TEMP_OUTPUT_PREFIX: S3_TEMP_OUTPUT_PREFIX,
+            },
+        });
+
         imageBucket.grantReadWrite(mailFetchingLambda);
-        imageBucket.grantRead(s3ProcessingLambda);
+        imageBucket.grantReadWrite(rotateImageLambda);
         imageBucket.grantRead(textractLambda);
+        imageBucket.grantReadWrite(completionLambda);
         mailMetadataTable.grantReadWriteData(textractLambda);
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
         mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
+        textractAsyncTask.taskTokenTable.grantReadWriteData(completionLambda);
 
         // Grant textract lambda permission to textract
         textractLambda.addToRolePolicy(new PolicyStatement({
@@ -105,13 +163,6 @@ export class MailProcessingStack extends cdk.Stack {
         }));
 
         // We will then click delete on the mail website.
-        const completionLambda = new NodejsFunction(this, 'CompletionLambda', {
-            runtime: lambda.Runtime.NODEJS_18_X,
-            entry: path.join(__dirname, 'lambda', 'completion.ts'),
-            environment: {
-                MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
-            },
-        });
 
         const mailFetchingTask = new LambdaInvoke(this, 'MailFetchingTask', {
             lambdaFunction: mailFetchingLambda,
@@ -138,23 +189,11 @@ export class MailProcessingStack extends cdk.Stack {
             },
         );
 
-        const textractAsyncTask = new TextractGenericAsyncSfnTask(
-            this,
-            'TextractAsync',
-            {
-                s3OutputBucket: imageBucket.bucketName,
-                s3TempOutputPrefix: S3_TEMP_OUTPUT_PREFIX,
-                integrationPattern: IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-                lambdaLogLevel: 'DEBUG',
-                lambdaTimeout: 900,
-                input: TaskInput.fromObject({
-                    Token: JsonPath.taskToken,
-                    ExecutionId: JsonPath.stringAt('$$.Execution.Id'),
-                    Payload: JsonPath.entirePayload,
-                }),
-                resultPath: '$.textract_result',
-            },
-        );
+
+        const rotateImage = new LambdaInvoke(this, 'RotateImageTask', {
+            lambdaFunction: rotateImageLambda,
+            outputPath: '$.Payload',
+        });
 
         const addQueriesTask = new LambdaInvoke(
             this,
@@ -178,7 +217,12 @@ export class MailProcessingStack extends cdk.Stack {
         const textractDecider = new TextractPOCDecider(this, 'TextractDeciderChainStart', {});
 
         // This allows us to get each s3 image and then process it with textract, then write it to dynamodb
-        const textractChain = Chain.start(textractDecider).next(addQueriesTask).next(textractAsyncTask).next(afterTextractTask);
+        const textractChain = Chain
+            .start(rotateImage)
+            .next(textractDecider)
+            .next(addQueriesTask)
+            .next(textractAsyncTask)
+            .next(afterTextractTask);
 
         const textractMapTask = new Map(this, 'TextractMapTask', {
             maxConcurrency: 10,

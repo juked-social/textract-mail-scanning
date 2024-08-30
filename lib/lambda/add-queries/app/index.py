@@ -9,40 +9,20 @@ def lambda_handler(event, context):
                 "alias": "SenderName"
             },
             {
-                "text": "What is the Sender's Address, usually starting with 'Ford'?",
-                "alias": "SenderAddress"
+                "text": "What is the Sender's Code?",
+                "alias": "UserCode"
             },
             {
-                "text": "What is the Sender City?",
-                "alias": "SenderCity"
+                "text": "What is the Sender's Address?",
+                "alias": "Address"
             },
             {
-                "text": "What is the Sender State?",
-                "alias": "SenderStateProvince"
+                "text": "What is the Sender's Email?",
+                "alias": "Email"
             },
             {
-                "text": "What is the Sender Postal Code?",
-                "alias": "SenderPostalCode"
-            },
-            {
-                "text": "What is the Recipient Name?",
-                "alias": "RecipientName"
-            },
-            {
-                "text": "What is the Recipient Address?",
-                "alias": "RecipientAddress"
-            },
-            {
-                "text": "What is the Recipient Address City?",
-                "alias": "DeliveryCity"
-            },
-            {
-                "text": "What is the Recipient Address State?",
-                "alias": "DeliveryStateProvince"
-            },
-            {
-                "text": "What is the Recipient Address Postal Code?",
-                "alias": "DeliveryPostalCode"
+                "text": "What is the Entire Text?",
+                "alias": "Message"
             },
         ]
         },
