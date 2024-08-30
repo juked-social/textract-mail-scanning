@@ -28,14 +28,15 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         console.log('Invoking Bedrock model');
 
         // Construct the prompt for Bedrock
-        const promptText = `
-        Extract the following information from the text:
-        - Code
-        - Address
-        - Email
-        - Name
-        - Message
-
+        const promptText = `Attached is a text extracted from a handwritten mail. It has a unique code, user name, user email id, address and a message.
+There could me minor typos in the text due to OCR, correct it. See the attached image used for OCR.
+- Extract following information from the textand respond in defined format.
+- code: a unique code.
+- user_full_name: Name of the user
+- email: Email id of the user
+- address: Full mailing Address of the user
+- message: Message from the user
+- Respond only in the defined format.
         Text to analyze:
         ${textContent}`;
 
@@ -162,14 +163,16 @@ export const handler = async (event: TextractInterface) => {
     // const extractedInfo = await invokeBedrockModel(bedrockClient, text);
 
     // CHATGPT need valid API KEY
-    // const prompt = `
-    // Extract the following information from the text:
-    //     - code
-    //     - address
-    //     - email
-    //     - name
-    //     - message`;
-    //
+    //     const prompt = `Attached is a text extracted from a handwritten mail. It has a unique code, user name, user email id, address and a message.
+    // There could me minor typos in the text due to OCR, correct it. See the attached image used for OCR.
+    // - Extract following information from the textand respond in defined format.
+    // - code: a unique code.
+    // - user_full_name: Name of the user
+    // - email: Email id of the user
+    // - address: Full mailing Address of the user
+    // - message: Message from the user
+    // - Respond only in the defined format.`;
+
     // const messages = [
     //     { role: 'system', content: prompt },
     //     { role: 'user', content: text },
