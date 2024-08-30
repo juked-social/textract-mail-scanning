@@ -16,7 +16,10 @@ import {
     Condition,
     Chain,
     Wait,
-    WaitTime, IntegrationPattern, TaskInput, JsonPath
+    WaitTime,
+    IntegrationPattern,
+    TaskInput,
+    JsonPath,
 } from 'aws-cdk-lib/aws-stepfunctions';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
@@ -136,14 +139,19 @@ export class MailProcessingStack extends cdk.Stack {
         const completionLambda = new NodejsFunction(this, 'CompletionLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'completion.ts'),
+            layers: [layerChrome, layerDateFns],
             memorySize: 1024, // Set memory size to 1024 MB
             timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
+            architecture: lambda.Architecture.X86_64,
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 TEMP_BUCKET_NAME: imageBucket.bucketName,
                 TEMP_TABLE_NAME: textractAsyncTask.taskTokenTableName,
                 REGION: this.region,
                 S3_TEMP_OUTPUT_PREFIX: S3_TEMP_OUTPUT_PREFIX,
+            },
+            bundling: {
+                externalModules: ['aws-sdk', '@sparticuz/chromium'] // Add any external modules here
             },
         });
 
@@ -212,6 +220,10 @@ export class MailProcessingStack extends cdk.Stack {
         const completionTask = new LambdaInvoke(this, 'CompletionTask', {
             lambdaFunction: completionLambda,
             outputPath: '$.Payload',
+            payload: TaskInput.fromObject({
+                'InputParameters.$': '$$.Execution.Input', // Pass the initial input to the completion task
+                'Payload.$': '$' // Keep the payload from previous steps
+            }),
         });
 
         const textractDecider = new TextractPOCDecider(this, 'TextractDeciderChainStart', {});
@@ -229,6 +241,7 @@ export class MailProcessingStack extends cdk.Stack {
             itemsPath: '$.images',
             itemSelector: {
                 's3Path.$': '$$.Map.Item.Value.s3Key', // Fix to set s3Path to s3Key
+                'anytimeAspNetSessionId.$': '$.anytimeAspNetSessionId' // Pass global parameter to each iteration
             },
         }).itemProcessor(
             textractChain

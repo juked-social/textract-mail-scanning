@@ -25,8 +25,6 @@ export const handler = async (event: LambdaEvent) => {
         };
     }
 
-    console.log(refTimestamp);
-
     const browser = await puppeteer.launch({
         args: chromium.args,
         defaultViewport: chromium.defaultViewport,
