@@ -8,17 +8,11 @@ import { BedrockRuntimeClient, InvokeModelCommand, InvokeModelResponse } from '@
 import { updateMailInDynamoDB } from './handler/mail-service';
 import { Mail } from './entry/mail';
 
-// const textractClient = new TextractClient({ region: process.env.REGION });
+const bedrockClient = new BedrockRuntimeClient({ region: process.env.REGION });
+
 const tableName = process.env.MAIL_METADATA_TABLE_NAME;
 const s3Client = new S3Client({ region: process.env.REGION });
-const openaiApiKey = process.env.OPENAI_API_KEY;
 const bedrockModelId = process.env.BEDROCK_MODEL_ID;
-
-// Define the type for messages
-interface Message {
-    role: string;
-    content: string;
-}
 
 interface BedrockResponse {
     address: string | null
@@ -26,11 +20,6 @@ interface BedrockResponse {
     email: string | null
     message: string | null
     user_full_name: string | null
-}
-
-// Define the type for the response when no output class is provided
-interface ChatCompletionResponse {
-    choices: Array<{ message: { content: string } }>;
 }
 
 async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textContent: string): Promise<any> {
@@ -84,7 +73,7 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         };
         console.log('responseBody: ', responseBody);
 
-        const extractedInformation: string = responseBody.content[0].text;
+        const extractedInformation: string = responseBody.content[0].text.replace('Here is the extracted information in the requested JSON format:', '');
 
         console.log(`Extracted information: ${extractedInformation}`);
         const parsedResponse = JSON.parse(extractedInformation);
@@ -97,25 +86,6 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
     }
 }
 
-// Define the type for the response when an output class is provided
-interface OutputClassResponse<T> {
-    choices: Array<{ message: { parsed: T } }>;
-}
-
-// Retry logic function
-async function retry<T>(fn: () => Promise<T>, retries: number, delay: number): Promise<T> {
-    try {
-        return await fn();
-    } catch (error) {
-        if (retries === 0) {
-            throw error;
-        }
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return retry(fn, retries - 1, delay);
-    }
-}
-
-// Define the function to read text from S3
 async function readTextFromS3(bucket: string, key: string): Promise<string> {
     try {
         console.log(`Reading text from S3: bucket=${bucket}, key=${key}`);
@@ -136,7 +106,6 @@ export const handler = async (event: TextractInterface) => {
     const anyMailId = extractCardValue(originalFilePath);
 
     const { bucket, key } = splitS3Url(event.textract_result.TextractTempOutputJsonPath);
-    const bedrockClient = new BedrockRuntimeClient({});
     const textractResponse = await readTextFromS3(bucket, `${key}/1`);
     const textractResponseJson = JSON.parse(textractResponse);
     const text = textractResponseJson?.Blocks?.filter((block: Block) => block.BlockType === 'LINE')?.map((block: Block) => block.Text || '').join('\n') || '';
@@ -162,19 +131,17 @@ export const handler = async (event: TextractInterface) => {
 
     const mail: Mail = {
         any_mail_id: Number(anyMailId),
-        assignedDate: '',
-        creationDate: '',
-        image_path: '',
-        lastActionDate: '',
+        // assignedDate: '',
+        // creationDate: '',
+        image_path: event.manifest.s3Path,
+        // lastActionDate: '',
         message: JSON.stringify(formattedResponse),
         // ScrapPostCard: '',
     };
 
-    // We will need to parse the textract output and extract the required information
-
     // Update the mail record with textract output
     if (mail) {
-        const mailData = { ...mail, message: '' };
+        const mailData = { ...mail };
         // Update existing mail
         await updateMailInDynamoDB(mailData);
     }

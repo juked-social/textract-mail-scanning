@@ -9,9 +9,9 @@ export type Mail = {
     message: string,
     image_path: string,
     is_valid?: string,
-    creationDate: string,
-    assignedDate: string,
-    lastActionDate: string,
+    creationDate?: string,
+    assignedDate?: string,
+    lastActionDate?: string,
 }
 
 export type AnytimeMailBox = {

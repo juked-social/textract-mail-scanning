@@ -153,7 +153,7 @@ export const shredAnytimeMails = async (page: Page, mailIds: string, cookies: {}
             const response = await fetch('https://packmail.anytimemailbox.com/app/mail-ajax/action', {
                 method: 'POST',
                 headers: new Headers(headers),
-                // todo apply mailIds
+                // TODO(): apply mailIds
                 body: new URLSearchParams({ ids: '', status: '81' }),
                 credentials: 'include',
             } as RequestInit);

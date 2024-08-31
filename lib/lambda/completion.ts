@@ -37,7 +37,7 @@ export const handler = async (event: any) => {
         await shredAnytimeMails(page, mailIds, cookies);
 
         // await deleteTempTableItems();
-
+        //
         // await deleteTempBucketItems();
 
         return {
