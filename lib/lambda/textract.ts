@@ -1,28 +1,72 @@
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import {
-    TextractClient, Block
+    Block
 } from '@aws-sdk/client-textract';
-import { TextractInterface } from './entry/textract';
-import { extractCardValue, splitS3Url } from './handler/utils';
+import { BedrockResponse, isValidReason, TextractInterface } from './entry/textract';
+import {
+    extractCardValue,
+    fixIncompleteJSON,
+    levenshteinDistance,
+    splitS3Url
+} from './handler/utils';
 import { BedrockRuntimeClient, InvokeModelCommand, InvokeModelResponse } from '@aws-sdk/client-bedrock-runtime';
-import { updateMailInDynamoDB } from './handler/mail-service';
+import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
 import { Mail } from './entry/mail';
 
 const bedrockClient = new BedrockRuntimeClient({ region: process.env.REGION });
 
-const tableName = process.env.MAIL_METADATA_TABLE_NAME;
 const s3Client = new S3Client({ region: process.env.REGION });
 const bedrockModelId = process.env.BEDROCK_MODEL_ID;
 
-interface BedrockResponse {
-    address: string | null
-    code: string | null
-    email: string | null
-    message: string | null
-    user_full_name: string | null
+
+function isValid(mail: BedrockResponse): isValidReason {
+    const expectedMessage = 'I wish to receive Sweeps Coins to participate in the sweepstakes promotions offered by Chanced. By submitting this request, I hereby declare that I have read, understood and agree to be bound by Chanced\'s Terms and Conditions and Sweeps Rules.';
+
+    const threshold = 10; // Adjust based on acceptable distance
+    const distance = levenshteinDistance(mail.message || '', expectedMessage);
+    
+    if (distance > threshold) {
+        return {
+            is_valid: false,
+            reason: 'Statement Invalid'
+        };
+    }
+
+    if (!mail.handwritten_confidence || mail.handwritten_confidence < 0.85) {
+        return {
+            is_valid: false,
+            reason: 'AI generated'
+        };
+    }
+
+    if (!mail.code) {
+        return {
+            is_valid: false,
+            reason: 'Invalid code'
+        };
+    }
+
+    if (!mail.user_full_name) {
+        return {
+            is_valid: false,
+            reason: 'Invalid user name'
+        };
+    }
+
+    if (!mail.email) {
+        return {
+            is_valid: false,
+            reason: 'Invalid email'
+        };
+    }
+
+    return {
+        is_valid: true,
+    };
 }
 
-async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textContent: string): Promise<any> {
+
+async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textContent: string) {
     try {
         console.log('Invoking Bedrock model');
         const systemPrompt = `You are a highly intelligent text processing assistant. 
@@ -45,7 +89,8 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         - Correct any typos or errors due to OCR.
         - Ensure proper capitalization and formatting.
         - If certain information is missing or incomplete, infer the best possible result.
-`;
+        `;
+
         const userMessage = {
             role: 'user',
             content: `Here is the text to analyze:\n${textContent}`
@@ -55,7 +100,7 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
             anthropic_version: 'bedrock-2023-05-31',
             max_tokens: 150,
             system: systemPrompt,
-            messages: [ userMessage],
+            messages: [userMessage],
             temperature: 0.5,
             top_p: 0.9
         };
@@ -66,26 +111,34 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
             contentType: 'application/json',
             accept: 'application/json'
         }));
-        console.log('Resp: ', response);
-        //
-        const responseBody = response?.body ? JSON.parse(new TextDecoder().decode(response.body)) : {
-            choices: [{ text: '' }]
-        };
-        console.log('responseBody: ', responseBody);
 
-        let extractedInformation: string = responseBody.content[0].text.replace('Here is the extracted information in the requested JSON format:', '');
-        const jsonObjectMatch = extractedInformation.match(/\{[\s\S]*}/);
-        if(jsonObjectMatch){
-            extractedInformation = jsonObjectMatch[0];
+        const responseBody = response?.body ? new TextDecoder('utf-8').decode(response.body) : '';
+
+        // Parse JSON string to object
+        const extractedInformationJSON = JSON.parse(responseBody);
+
+        console.log('extractedInformationJSON', extractedInformationJSON);
+
+        // Assume extractedInformation is the text you want to clean
+        const infoText = extractedInformationJSON?.content?.[0]?.text?.split('{')[0].trim();
+        let extractedInformation = extractedInformationJSON?.content?.[0]?.text
+            ?.replace(infoText, '')
+            .replace(/\n/g, '')
+            .trim();
+
+        const transformedJson = fixIncompleteJSON(extractedInformation);
+
+        // If no match is found, try appending a closing brace if needed
+        if (transformedJson.match(/\{[\s\S]*}/)) {
+            extractedInformation = transformedJson;
         } else {
-            console.log('No JSON object found in the response -', extractedInformation);
+            console.error('Error parsing corrected JSON');
+            return null;
         }
 
-        console.log(`Extracted information: ${extractedInformation}`);
-        const parsedResponse = JSON.parse(extractedInformation);
-
-        console.log(`Parsed response: ${parsedResponse}`);
-        return parsedResponse;
+        console.log('extractedInformation', extractedInformation);
+        // Ensure extractedInformation is an object
+        return JSON.parse(extractedInformation || '{}');
     } catch (error) {
         console.log(`Error invoking Bedrock model: ${error}`);
         throw error;
@@ -114,47 +167,48 @@ export const handler = async (event: TextractInterface) => {
     const { bucket, key } = splitS3Url(event.Payload.textract_result.TextractTempOutputJsonPath);
     const textractResponse = await readTextFromS3(bucket, `${key}/1`);
     const textractResponseJson = JSON.parse(textractResponse);
-    console.log('Textract response:', textractResponseJson);
+
     const text = textractResponseJson?.Blocks
         ?.filter((block: Block) => block.BlockType === 'LINE')
         ?.map((block: Block) => block.Text || '')
         .join('\n')
         || '';
 
-    const extractedInfo: BedrockResponse = await invokeBedrockModel(bedrockClient, text);
+    let extractedInfo = await invokeBedrockModel(bedrockClient, text);
 
     if (extractedInfo === null) {
         return {};
     }
 
-    console.log('Extracted event:', event);
+    console.log('extractedInfo', extractedInfo);
+    if(typeof extractedInfo === 'string'){
+        extractedInfo = JSON.parse(extractedInfo);
+    }
+
     const formattedResponse = {
         handwritten_confidence: 0.85,
         ...extractedInfo
     };
+
     formattedResponse.code = formattedResponse.code ? (formattedResponse.code.replace(/[^a-zA-Z0-9]/g, '')) : '';
     formattedResponse.user_full_name = formattedResponse.user_full_name ? formattedResponse.user_full_name.replace(/[^a-zA-Z\s]/g, '') : '';
     formattedResponse.email = formattedResponse.email ? formattedResponse.email.replace(/[^a-zA-Z0-9_.+-@]/g, '').toLowerCase() : '';
     formattedResponse.message = formattedResponse.message ? formattedResponse.message.replace(/[^a-zA-Z0-9@.\s]/g, '') : '';
 
-    console.log('What you are going to write', formattedResponse);
-
-    // TODO(): Where to get these values
-    const mail: Mail = {
-        any_mail_id: Number(anyMailId),
-        assignedDate: event.InputParameters.body.endDate,
-        creationDate: event.InputParameters.body.startDate,
-        image_path: originalFilePath,
-        lastActionDate: new Date().toString(),
-        message: JSON.stringify(formattedResponse),
-    };
-
-    // Update the mail record with textract output
+    const mail = await getMailFromDynamoDB(Number(anyMailId));
     if (mail) {
-        const mailData = { ...mail };
-        // Update existing mail
-        await updateMailInDynamoDB(mailData);
-    }
+        const is_valid_reason = isValid(formattedResponse);
+        console.log('formattedResponse', formattedResponse);
 
+        const mailObj: Mail = {
+            ...mail,
+            ...formattedResponse,
+            lastActionDate: new Date().toISOString(),
+            is_valid: is_valid_reason.is_valid,
+            reason: is_valid_reason.reason
+        };
+
+        await updateMailInDynamoDB(mailObj);
+    }
     return { id: anyMailId };
 };

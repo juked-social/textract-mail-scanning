@@ -1,17 +1,18 @@
 export type Mail = {
     any_mail_id: number,
+    message: string,
+    image_path: string,
     reason?: string,
     note?: string,
     code?: string,
     email?: string,
     user_full_name?: string,
     address?: string,
-    message: string,
-    image_path: string,
-    is_valid?: string,
-    creationDate?: string,
-    assignedDate?: string,
-    lastActionDate?: string,
+    is_valid?: boolean,
+    handwritten_confidence?: number,
+    creationDate: string,
+    assignedDate: string,
+    lastActionDate: string,
 }
 
 export type AnytimeMailBox = {

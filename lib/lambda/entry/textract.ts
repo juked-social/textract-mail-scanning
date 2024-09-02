@@ -1,8 +1,16 @@
-import { FeatureType } from '@aws-sdk/client-textract';
 
-export interface TextractInterfaceQuery {
-    text: string;
-    alies: string;
+export interface BedrockResponse {
+    address?: string
+    code?: string
+    email?: string
+    message?: string
+    user_full_name?: string
+    handwritten_confidence?: number
+}
+
+export interface isValidReason {
+    is_valid: boolean
+    reason?: string
 }
 
 export interface TextractInterface {

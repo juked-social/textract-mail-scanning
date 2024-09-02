@@ -7,7 +7,7 @@ export const handler = async (event: any) => {
 
     const mails = await getMailByDates(new Date(startDate).toISOString(), new Date(endDate).toISOString());
 
-    const images = mails?.map((mail: Mail) => ({
+    const images = mails?.filter((mail: Mail) => !!mail.image_path).map((mail: Mail) => ({
         s3Key: mail.image_path,
     })) || [];
     return { images, anytimeAspNetSessionId };
