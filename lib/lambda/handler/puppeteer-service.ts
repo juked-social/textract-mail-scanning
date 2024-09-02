@@ -146,8 +146,6 @@ export const shredAnytimeMails = async (page: Page, mailIds: string, cookies: {}
         return response.json();
     }, mailIds, headers, cookies);
 
-    console.log('request', request);
-
     if(request.success){
         const result = await page.evaluate(async (mailIds, headers, cookies) => {
             const response = await fetch('https://packmail.anytimemailbox.com/app/mail-ajax/action', {
@@ -161,7 +159,6 @@ export const shredAnytimeMails = async (page: Page, mailIds: string, cookies: {}
             if (!response.ok) {
                 throw new Error('Network response was not ok');
             }
-
             return response.json();
         }, mailIds, headers, cookies);
 

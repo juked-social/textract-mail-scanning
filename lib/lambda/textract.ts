@@ -73,7 +73,13 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         };
         console.log('responseBody: ', responseBody);
 
-        const extractedInformation: string = responseBody.content[0].text.replace('Here is the extracted information in the requested JSON format:', '');
+        let extractedInformation: string = responseBody.content[0].text.replace('Here is the extracted information in the requested JSON format:', '');
+        const jsonObjectMatch = extractedInformation.match(/\{[\s\S]*}/);
+        if(jsonObjectMatch){
+            extractedInformation = jsonObjectMatch[0];
+        } else {
+            console.log('No JSON object found in the response -', extractedInformation);
+        }
 
         console.log(`Extracted information: ${extractedInformation}`);
         const parsedResponse = JSON.parse(extractedInformation);
@@ -102,15 +108,18 @@ async function readTextFromS3(bucket: string, key: string): Promise<string> {
 
 // Define the function to update mail in DynamoDB
 export const handler = async (event: TextractInterface) => {
-    const originalFilePath = event.manifest.s3Path;
+    const originalFilePath = event?.Payload?.manifest?.s3Path;
     const anyMailId = extractCardValue(originalFilePath);
 
-    const { bucket, key } = splitS3Url(event.textract_result.TextractTempOutputJsonPath);
+    const { bucket, key } = splitS3Url(event.Payload.textract_result.TextractTempOutputJsonPath);
     const textractResponse = await readTextFromS3(bucket, `${key}/1`);
     const textractResponseJson = JSON.parse(textractResponse);
-    const text = textractResponseJson?.Blocks?.filter((block: Block) => block.BlockType === 'LINE')?.map((block: Block) => block.Text || '').join('\n') || '';
-
-    console.log(text);
+    console.log('Textract response:', textractResponseJson);
+    const text = textractResponseJson?.Blocks
+        ?.filter((block: Block) => block.BlockType === 'LINE')
+        ?.map((block: Block) => block.Text || '')
+        .join('\n')
+        || '';
 
     const extractedInfo: BedrockResponse = await invokeBedrockModel(bedrockClient, text);
 
@@ -118,6 +127,7 @@ export const handler = async (event: TextractInterface) => {
         return {};
     }
 
+    console.log('Extracted event:', event);
     const formattedResponse = {
         handwritten_confidence: 0.85,
         ...extractedInfo
@@ -129,14 +139,14 @@ export const handler = async (event: TextractInterface) => {
 
     console.log('What you are going to write', formattedResponse);
 
+    // TODO(): Where to get these values
     const mail: Mail = {
         any_mail_id: Number(anyMailId),
-        // assignedDate: '',
-        // creationDate: '',
-        image_path: event.manifest.s3Path,
-        // lastActionDate: '',
+        assignedDate: event.InputParameters.body.endDate,
+        creationDate: event.InputParameters.body.startDate,
+        image_path: originalFilePath,
+        lastActionDate: new Date().toString(),
         message: JSON.stringify(formattedResponse),
-        // ScrapPostCard: '',
     };
 
     // Update the mail record with textract output
