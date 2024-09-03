@@ -4,7 +4,7 @@ import { DeleteObjectsCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/c
 
 const { TEMP_TABLE_NAME, REGION, TEMP_BUCKET_NAME, S3_TEMP_OUTPUT_PREFIX } = process.env;
 const dynamoDbClient = new DynamoDBClient({ region: REGION });
-const s3Client = new S3Client({ region: process.env.REGION });
+const s3Client = new S3Client({ region: REGION });
 
 export const deleteTempTableItems = async () => {
     // delete everything from temp table
