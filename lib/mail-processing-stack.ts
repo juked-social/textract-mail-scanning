@@ -26,6 +26,7 @@ import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { TextractGenericAsyncSfnTask, TextractPOCDecider } from 'amazon-textract-idp-cdk-constructs';
 import { Duration } from 'aws-cdk-lib';
 
+
 export class MailProcessingStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -60,6 +61,12 @@ export class MailProcessingStack extends cdk.Stack {
             code: lambda.Code.fromAsset(path.join(__dirname, 'layer/sharp/sharp.zip')),
             compatibleRuntimes: [lambda.Runtime.NODEJS_18_X],
         });
+
+        const layerFastLevenshtein = new lambda.LayerVersion(this, 'FastLevenshteinLayer', {
+            code: lambda.Code.fromAsset(path.join(__dirname, 'layer/fast-levenshtein/fast-levenshtein.zip')),
+            compatibleRuntimes: [lambda.Runtime.NODEJS_18_X],
+        });
+
 
         // Define the Lambda function
         const mailFetchingLambda = new NodejsFunction(this, 'MailFetcherLambda', {
@@ -109,13 +116,17 @@ export class MailProcessingStack extends cdk.Stack {
         const textractLambda = new NodejsFunction(this, 'TextractLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'textract.ts'),
+            layers: [layerFastLevenshtein],
+            memorySize: 1024, // Set memory size to 1024 MB
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
                 BEDROCK_MODEL_ID: 'anthropic.claude-3-haiku-20240307-v1:0',
-                OPENAI_API_KEY: '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',
             },
             timeout: cdk.Duration.minutes(2),
+            bundling: {
+                nodeModules: ['fast-levenshtein'],
+            }
         });
 
         const textractAsyncTask = new TextractGenericAsyncSfnTask(
@@ -254,7 +265,7 @@ export class MailProcessingStack extends cdk.Stack {
         );
 
         const checkMorePages = new Choice(this, 'CheckIfMorePages')
-            .when(Condition.booleanEquals('$.body.toNextPage', false),
+            .when(Condition.booleanEquals('$.body.toNextPage', true),
                 new Wait(this, 'wait', { time: WaitTime.duration(cdk.Duration.seconds(5)) }).next(mailFetchingTask))
             .otherwise(s3ProcessingTask)
             .afterwards();

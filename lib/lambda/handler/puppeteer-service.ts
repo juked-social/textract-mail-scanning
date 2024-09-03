@@ -77,7 +77,10 @@ export async function getAnytimeMailPageInfo(page: Page, startDate: Date, endDat
 
             if (existingMail) {
                 // Update existing mail
-                await updateMailInDynamoDB(mailData);
+                await updateMailInDynamoDB({
+                    ...existingMail,
+                    ...mailData
+                });
             } else {
                 // Save new mail
                 await saveMailToDynamoDB(mailData);

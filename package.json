@@ -39,6 +39,7 @@
     "@sparticuz/chromium": "^127.0.0",
     "@sparticuz/chromium-min": "^127.0.0",
     "@types/aws-lambda": "^8.10.143",
+    "@types/fast-levenshtein": "^0.0.4",
     "amazon-textract-idp-cdk-constructs": "^0.0.43",
     "aws-cdk-lib": "2.153.0",
     "aws-sdk": "^2.1683.0",

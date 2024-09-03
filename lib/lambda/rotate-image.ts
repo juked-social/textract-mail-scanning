@@ -15,7 +15,6 @@ export async function processImage(imagePath: string): Promise<Buffer> {
         image = image.rotate(-90);
     }
     image
-        .resize({ width: 800, height: 520 })
         .normalize() // Improve contrast and brightness
         .linear(1.5, -50); // Adjust contrast (1.5) and brightness (-50);
 
@@ -24,8 +23,9 @@ export async function processImage(imagePath: string): Promise<Buffer> {
 }
 
 export const handler = async (event: any) => {
+    const { s3Path } = event;
+
     try {
-        const { s3Path } = event;
 
         const { bucket, key } = splitS3Url(s3Path);
 
@@ -66,14 +66,8 @@ export const handler = async (event: any) => {
             // Clean up temporary file
             fs.unlinkSync(tempFilePath);
         }
-        return { s3Path };
     } catch (error) {
         console.error('Error during processing:', error);
-        return {
-            statusCode: 500,
-            body: {
-                message: 'Internal server error', error: error
-            },
-        };
     }
+    return { s3Path };
 };

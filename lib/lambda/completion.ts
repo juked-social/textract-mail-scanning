@@ -32,13 +32,13 @@ export const handler = async (event: any) => {
             'ASP.NET_SessionId': anytimeAspNetSessionId
         };
 
-        const mailIds = idsArray.map((item: {id: string}) => item.id).join(', ');
+        const mailIds = idsArray.filter((item: {id: string}) => !!item?.id).map((item: {id: string}) => item.id).join(', ');
 
         await shredAnytimeMails(page, mailIds, cookies);
 
-        // await deleteTempTableItems();
-        //
-        // await deleteTempBucketItems();
+        await deleteTempTableItems();
+
+        await deleteTempBucketItems();
 
         return {
             statusCode: 200,

@@ -13,6 +13,7 @@ interface LambdaEvent {
     body: string | EventBody;
 }
 
+
 export const handler = async (event: LambdaEvent) => {
     const body = typeof event.body === 'string' ? JSON.parse(event.body || '{}') : event.body;
 

@@ -1,10 +1,9 @@
-// trigger.ts
-
 import { APIGatewayProxyHandler } from 'aws-lambda';
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 
 const stateMachineArn = process.env.STATE_MACHINE_ARN!;
 const sfnClient = new SFNClient({ region: process.env.REGION });
+
 
 export const handler: APIGatewayProxyHandler = async (event) => {
     try {

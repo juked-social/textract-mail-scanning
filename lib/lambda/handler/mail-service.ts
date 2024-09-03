@@ -57,12 +57,12 @@ const getAttributeValues = (mail: Mail) => ({
     ':creationDate': mail.creationDate,
     ':assignedDate': mail.assignedDate,
     ':lastActionDate': mail.lastActionDate,
-    ':code': mail.code || null,
-    ':user_full_name': mail.user_full_name || null,
-    ':email': mail.email || null,
-    ':address': mail.address || null,
-    ':is_valid': mail.is_valid || null,
-    ':reason': mail.reason || null
+    ':code': mail.code || '',
+    ':user_full_name': mail.user_full_name || '',
+    ':email': mail.email || '',
+    ':address': mail.address || '',
+    ':is_valid': mail.is_valid || false,
+    ':reason': mail.reason || ''
 });
 
 // Function to save mail to DynamoDB
