@@ -11,7 +11,6 @@ import {
     UpdateCommandInput,
     ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
-import { unmarshall } from '@aws-sdk/util-dynamodb';
 
 // Initialize DynamoDB client
 const AWS_REGION = process.env.REGION;
@@ -58,6 +57,12 @@ const getAttributeValues = (mail: Mail) => ({
     ':creationDate': mail.creationDate,
     ':assignedDate': mail.assignedDate,
     ':lastActionDate': mail.lastActionDate,
+    ':code': mail.code || null,
+    ':user_full_name': mail.user_full_name || null,
+    ':email': mail.email || null,
+    ':address': mail.address || null,
+    ':is_valid': mail.is_valid || null,
+    ':reason': mail.reason || null
 });
 
 // Function to save mail to DynamoDB
@@ -89,7 +94,13 @@ export async function updateMailInDynamoDB(mail: Mail) {
                     #image_path = :image_path,
                     #creationDate = :creationDate,
                     #assignedDate = :assignedDate,
-                    #lastActionDate = :lastActionDate
+                    #lastActionDate = :lastActionDate,
+                    #code = :code,
+                    #user_full_name = :user_full_name,
+                    #email = :email,
+                    #address = :address,
+                    #is_valid = :is_valid,
+                    #reason = :reason
             `,
             ExpressionAttributeValues: getAttributeValues(mail),
             ExpressionAttributeNames: {
@@ -98,6 +109,12 @@ export async function updateMailInDynamoDB(mail: Mail) {
                 '#creationDate': 'creationDate',
                 '#assignedDate': 'assignedDate',
                 '#lastActionDate': 'lastActionDate',
+                '#code': 'code',
+                '#user_full_name': 'user_full_name',
+                '#email': 'email',
+                '#address': 'address',
+                '#is_valid': 'is_valid',
+                '#reason': 'reason'
             },
             ReturnValues: 'UPDATED_NEW',
         };

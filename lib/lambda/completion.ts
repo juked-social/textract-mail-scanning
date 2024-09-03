@@ -7,7 +7,7 @@ import { shredAnytimeMails } from './handler/puppeteer-service';
 export const handler = async (event: any) => {
     const body = typeof event.InputParameters.body === 'string' ? JSON.parse(event.InputParameters.body || '{}') : event.InputParameters.body;
     const { anytimeAspNetSessionId } = body;
-    
+
     const idsArray = typeof event.Payload === 'string' ? JSON.parse(event.Payload || '[]') : event.Payload;
 
     const browser = await puppeteer.launch({
@@ -36,9 +36,9 @@ export const handler = async (event: any) => {
 
         await shredAnytimeMails(page, mailIds, cookies);
 
-        await deleteTempTableItems();
-
-        await deleteTempBucketItems();
+        // await deleteTempTableItems();
+        //
+        // await deleteTempBucketItems();
 
         return {
             statusCode: 200,

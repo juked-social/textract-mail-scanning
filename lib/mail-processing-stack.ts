@@ -112,7 +112,7 @@ export class MailProcessingStack extends cdk.Stack {
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
-                BEDROCK_MODEL_ID: 'amazon.titan-text-express-v1',
+                BEDROCK_MODEL_ID: 'anthropic.claude-3-haiku-20240307-v1:0',
                 OPENAI_API_KEY: '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',
             },
             timeout: cdk.Duration.minutes(2),
@@ -166,8 +166,10 @@ export class MailProcessingStack extends cdk.Stack {
 
         // Grant textract lambda permission to textract
         textractLambda.addToRolePolicy(new PolicyStatement({
-            actions: ['textract:*'],
-            resources: ['*'],
+            actions: ['bedrock:InvokeModel'],
+            resources: [
+                'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
+            ],
         }));
 
         // We will then click delete on the mail website.
@@ -214,6 +216,10 @@ export class MailProcessingStack extends cdk.Stack {
 
         const afterTextractTask = new LambdaInvoke(this, 'TextractTask', {
             lambdaFunction: textractLambda,
+            payload: TaskInput.fromObject({
+                'InputParameters.$': '$$.Execution.Input', // Pass the initial input to the completion task
+                'Payload.$': '$' // Keep the payload from previous steps
+            }),
             outputPath: '$.Payload',
         });
 
@@ -240,8 +246,8 @@ export class MailProcessingStack extends cdk.Stack {
             maxConcurrency: 10,
             itemsPath: '$.images',
             itemSelector: {
-                's3Path.$': '$$.Map.Item.Value.s3Key', // Fix to set s3Path to s3Key
-                'anytimeAspNetSessionId.$': '$.anytimeAspNetSessionId' // Pass global parameter to each iteration
+                's3Path.$': '$$.Map.Item.Value.s3Key',
+                'anytimeAspNetSessionId.$': '$.anytimeAspNetSessionId'
             },
         }).itemProcessor(
             textractChain
@@ -262,7 +268,7 @@ export class MailProcessingStack extends cdk.Stack {
         // Create the State Machine
         const stateMachine = new StateMachine(this, 'MailProcessingStateMachine', {
             definitionBody: DefinitionBody.fromChainable(definition),
-            timeout: cdk.Duration.minutes(120),
+            timeout: cdk.Duration.hours(24),
         });
 
         // Define the Trigger Lambda function
@@ -273,6 +279,7 @@ export class MailProcessingStack extends cdk.Stack {
                 STATE_MACHINE_ARN: stateMachine.stateMachineArn,
             },
         });
+
         stateMachine.grantStartExecution(triggerLambda);
 
         const api = new apigateway.RestApi(this, 'MailProcessingApi', {
