@@ -5,7 +5,6 @@ import {
 import { BedrockResponse, isValidReason, TextractInterface } from './entry/textract';
 import {
     extractCardValue,
-    fixIncompleteJSON,
     splitS3Url
 } from './handler/utils';
 import { BedrockRuntimeClient, InvokeModelCommand, InvokeModelResponse } from '@aws-sdk/client-bedrock-runtime';
@@ -97,6 +96,9 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         - Ensure proper capitalization and formatting.
         - If certain information is missing or incomplete, infer the best possible result.
         - Only return a perfect JSON object in this format, and no other string values.
+        - Use double quotes around both keys and string values in the JSON. Avoid any unmatched or extra double quotes.
+        - If double quotes appear within a string value, escape them using backslashes (e.g., \`\\"\`).
+        - Ensure there are no trailing commas or extra characters. The JSON should be valid and properly formatted.
         `;
 
         const userMessage = {
@@ -122,28 +124,30 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
 
         const responseBody = response?.body ? new TextDecoder('utf-8').decode(response.body) : '';
 
+        console.log('responseBody', responseBody);
         // Parse JSON string to object
         const extractedInformationJSON = JSON.parse(responseBody);
 
         // Assume extractedInformation is the text you want to clean
         const infoText = extractedInformationJSON?.content?.[0]?.text?.split('{')[0].trim();
-        let extractedInformation = extractedInformationJSON?.content?.[0]?.text
+        const extractedInformation = extractedInformationJSON?.content?.[0]?.text
             ?.replace(infoText, '')
             .replace(/\n/g, '')
             .trim();
 
-        const transformedJson = fixIncompleteJSON(extractedInformation);
-
         // If no match is found, try appending a closing brace if needed
-        if (transformedJson.match(/\{[\s\S]*}/)) {
-            extractedInformation = transformedJson;
-        } else {
+        if (!extractedInformation.match(/\{[\s\S]*}/)) {
             console.error('Error parsing corrected JSON');
             return null;
         }
 
-        // Ensure extractedInformation is an object
-        return JSON.parse(extractedInformation || '{}');
+        console.log('extractedInformation', extractedInformation);
+
+        if(typeof extractedInformation === 'string'){
+            return JSON.parse(extractedInformation || '{}');
+        }else{
+            return extractedInformation;
+        }
     } catch (error) {
         console.log(`Error invoking Bedrock model: ${error}`);
         throw error;
@@ -169,9 +173,13 @@ export const handler = async (event: TextractInterface) => {
     try {
         const originalFilePath = event?.Payload?.manifest?.s3Path;
         const anyMailId = extractCardValue(originalFilePath);
+        if(!anyMailId){
+            return { id: '', s3Path: originalFilePath };
+        }
 
         const { bucket, key } = splitS3Url(event.Payload.textract_result.TextractTempOutputJsonPath);
         const textractResponse = await readTextFromS3(bucket, `${key}/1`);
+        console.log('textractResponse', textractResponse);
         const textractResponseJson = JSON.parse(textractResponse);
 
         const text = textractResponseJson?.Blocks
@@ -183,7 +191,7 @@ export const handler = async (event: TextractInterface) => {
         let extractedInfo = await invokeBedrockModel(bedrockClient, text);
 
         if (extractedInfo === null) {
-            return {};
+            return { id: '', s3Path: originalFilePath };
         }
 
         if (typeof extractedInfo === 'string') {
@@ -215,12 +223,12 @@ export const handler = async (event: TextractInterface) => {
             await updateMailInDynamoDB(mailObj);
 
             if(is_valid_reason.is_valid) {
-                return { id: anyMailId };
+                return { id: anyMailId, s3Path: originalFilePath };
             }
         }
+        return { id: '', s3Path: originalFilePath };
     }catch (error){
         console.log(`Error extracting text: error=${error}`);
+        throw error;
     }
-
-    return { id: '' };
 };
