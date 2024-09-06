@@ -96,7 +96,7 @@ export class MailProcessingStack extends cdk.Stack {
             },
         });
 
-        const rotateImageLambda = new NodejsFunction(this, 'TextractDeciderLambda', {
+        const rotateImageLambda = new NodejsFunction(this, 'TextractRotateLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'rotate-image.ts'),
             layers: [layerSharp],
@@ -129,9 +129,38 @@ export class MailProcessingStack extends cdk.Stack {
             }
         });
 
+        const validatorLambda = new NodejsFunction(this, 'ValidatorLambda', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            entry: path.join(__dirname, 'lambda', 'validator.ts'),
+            memorySize: 1024, // Set memory size to 1024 MB
+            environment: {
+                MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
+                REGION: this.region,
+            },
+            timeout: cdk.Duration.minutes(2)
+        });
+
         const textractAsyncTask = new TextractGenericAsyncSfnTask(
             this,
             'TextractAsync',
+            {
+                s3OutputBucket: imageBucket.bucketName,
+                s3TempOutputPrefix: S3_TEMP_OUTPUT_PREFIX,
+                integrationPattern: IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+                lambdaLogLevel: 'DEBUG',
+                lambdaTimeout: 900,
+                input: TaskInput.fromObject({
+                    Token: JsonPath.taskToken,
+                    ExecutionId: JsonPath.stringAt('$$.Execution.Id'),
+                    Payload: JsonPath.entirePayload,
+                }),
+                resultPath: '$.textract_result',
+            },
+        );
+
+        const textractAsyncRotateTask = new TextractGenericAsyncSfnTask(
+            this,
+            'TextractAsyncRotate',
             {
                 s3OutputBucket: imageBucket.bucketName,
                 s3TempOutputPrefix: S3_TEMP_OUTPUT_PREFIX,
@@ -166,25 +195,7 @@ export class MailProcessingStack extends cdk.Stack {
             },
         });
 
-        imageBucket.grantReadWrite(mailFetchingLambda);
-        imageBucket.grantReadWrite(rotateImageLambda);
-        imageBucket.grantRead(textractLambda);
-        imageBucket.grantReadWrite(completionLambda);
-        mailMetadataTable.grantReadWriteData(textractLambda);
-        mailMetadataTable.grantReadWriteData(mailFetchingLambda);
-        mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
-        textractAsyncTask.taskTokenTable.grantReadWriteData(completionLambda);
-
-        // Grant textract lambda permission to textract
-        textractLambda.addToRolePolicy(new PolicyStatement({
-            actions: ['bedrock:InvokeModel'],
-            resources: [
-                'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
-            ],
-        }));
-
         // We will then click delete on the mail website.
-
         const mailFetchingTask = new LambdaInvoke(this, 'MailFetchingTask', {
             lambdaFunction: mailFetchingLambda,
             outputPath: '$.Payload',
@@ -210,7 +221,6 @@ export class MailProcessingStack extends cdk.Stack {
             },
         );
 
-
         const rotateImage = new LambdaInvoke(this, 'RotateImageTask', {
             lambdaFunction: rotateImageLambda,
             outputPath: '$.Payload',
@@ -225,8 +235,35 @@ export class MailProcessingStack extends cdk.Stack {
             },
         );
 
+        const addQueriesRotateTask = new LambdaInvoke(
+            this,
+            'AddQueriesRotate',
+            {
+                lambdaFunction: addQueriesFunction,
+                resultPath: '$.Payload',
+            },
+        );
+
         const afterTextractTask = new LambdaInvoke(this, 'TextractTask', {
             lambdaFunction: textractLambda,
+            payload: TaskInput.fromObject({
+                'InputParameters.$': '$$.Execution.Input', // Pass the initial input to the completion task
+                'Payload.$': '$' // Keep the payload from previous steps
+            }),
+            outputPath: '$.Payload',
+        });
+
+        const afterTextractRotateTask = new LambdaInvoke(this, 'TextractRotateTask', {
+            lambdaFunction: textractLambda,
+            payload: TaskInput.fromObject({
+                'InputParameters.$': '$$.Execution.Input', // Pass the initial input to the completion task
+                'Payload.$': '$' // Keep the payload from previous steps
+            }),
+            outputPath: '$.Payload',
+        });
+
+        const validatorTask = new LambdaInvoke(this, 'ValidatorTask', {
+            lambdaFunction: validatorLambda,
             payload: TaskInput.fromObject({
                 'InputParameters.$': '$$.Execution.Input', // Pass the initial input to the completion task
                 'Payload.$': '$' // Keep the payload from previous steps
@@ -243,22 +280,52 @@ export class MailProcessingStack extends cdk.Stack {
             }),
         });
 
-        const textractDecider = new TextractPOCDecider(this, 'TextractDeciderChainStart', {});
+        imageBucket.grantReadWrite(mailFetchingLambda);
+        imageBucket.grantReadWrite(rotateImageLambda);
+        imageBucket.grantRead(textractLambda);
+        imageBucket.grantReadWrite(completionLambda);
+        mailMetadataTable.grantReadWriteData(textractLambda);
+        mailMetadataTable.grantReadWriteData(mailFetchingLambda);
+        mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
+        mailMetadataTable.grantReadWriteData(validatorLambda);
+        textractAsyncTask.taskTokenTable.grantReadWriteData(completionLambda);
 
-        // This allows us to get each s3 image and then process it with textract, then write it to dynamodb
+        // Grant textract lambda permission to textract
+        textractLambda.addToRolePolicy(new PolicyStatement({
+            actions: ['bedrock:InvokeModel'],
+            resources: [
+                'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
+            ],
+        }));
+
+        const textractDecider = new TextractPOCDecider(this, 'TextractDeciderChainStart', {});
+        const textractDeciderRotate = new TextractPOCDecider(this, 'TextractDeciderChainRotate', {});
+
+        const checkRotateImage = new Choice(this, 'CheckIfRotateImage')
+            .when(Condition.or(Condition.isNotPresent('$.id'), Condition.stringEquals('$.id', '')),
+                Chain
+                    .start(rotateImage)
+                    .next(textractDeciderRotate)
+                    .next(addQueriesRotateTask)
+                    .next(textractAsyncRotateTask)
+                    .next(afterTextractRotateTask)
+                    .next(validatorTask)
+            )
+            .otherwise(validatorTask)
+            .afterwards();
+
         const textractChain = Chain
-            .start(rotateImage)
-            .next(textractDecider)
+            .start(textractDecider)
             .next(addQueriesTask)
             .next(textractAsyncTask)
-            .next(afterTextractTask);
+            .next(afterTextractTask)
+            .next(checkRotateImage);
 
         const textractMapTask = new Map(this, 'TextractMapTask', {
             maxConcurrency: 10,
             itemsPath: '$.images',
             itemSelector: {
-                's3Path.$': '$$.Map.Item.Value.s3Key',
-                'anytimeAspNetSessionId.$': '$.anytimeAspNetSessionId'
+                's3Path.$': '$$.Map.Item.Value.s3Key'
             },
         }).itemProcessor(
             textractChain
