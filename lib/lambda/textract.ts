@@ -97,8 +97,13 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         - If certain information is missing or incomplete, infer the best possible result.
         - Only return a perfect JSON object in this format, and no other string values.
         - Use double quotes around both keys and string values in the JSON. Avoid any unmatched or extra double quotes.
-        - If double quotes appear within a string value, escape them using backslashes (e.g., \`\\"\`).
+        - If double quotes appear within a string value, escape them using backslashes (e.g., \`\\"\`), and ensure no extra backslashes are present.
         - Ensure there are no trailing commas or extra characters. The JSON should be valid and properly formatted.
+        - Replace incorrect characters or symbols with the correct ones.
+        - Properly format the email address and address fields to match standard conventions.
+        - Ensure that the JSON string does not contain newline characters (e.g.,\`\\n\`). All text should be on a single line.
+        - Ensure that the JSON string inside the "text" field is properly formatted and does not start or end with extraneous characters or quotes. The JSON should be a single line and correctly escaped. 
+        - If you encounter an improperly closed JSON string within the "text" field, correct it by ensuring it starts and ends with the correct quotes and is valid JSON.
         `;
 
         const userMessage = {
@@ -108,7 +113,7 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
 
         const requestBody = {
             anthropic_version: 'bedrock-2023-05-31',
-            max_tokens: 150,
+            max_tokens: 180,
             system: systemPrompt,
             messages: [userMessage],
             temperature: 0.5,
@@ -143,15 +148,12 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
 
         console.log('extractedInformation', extractedInformation);
 
-        if(typeof extractedInformation === 'string'){
-            return JSON.parse(extractedInformation || '{}');
-        }else{
-            return extractedInformation;
-        }
+        return JSON.parse(extractedInformation || '{}');
     } catch (error) {
         console.log(`Error invoking Bedrock model: ${error}`);
-        throw error;
     }
+
+    return null;
 }
 
 async function readTextFromS3(bucket: string, key: string): Promise<string> {
@@ -170,6 +172,8 @@ async function readTextFromS3(bucket: string, key: string): Promise<string> {
 
 // Define the function to update mail in DynamoDB
 export const handler = async (event: TextractInterface) => {
+    const originalFilePath = event?.Payload?.manifest?.s3Path || '';
+
     try {
         const originalFilePath = event?.Payload?.manifest?.s3Path;
         const anyMailId = extractCardValue(originalFilePath);
@@ -226,9 +230,9 @@ export const handler = async (event: TextractInterface) => {
                 return { id: anyMailId, s3Path: originalFilePath };
             }
         }
-        return { id: '', s3Path: originalFilePath };
     }catch (error){
         console.log(`Error extracting text: error=${error}`);
-        throw error;
     }
+
+    return { id: '', s3Path: originalFilePath };
 };
