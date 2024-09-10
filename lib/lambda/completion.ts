@@ -1,13 +1,14 @@
 import puppeteer from 'puppeteer';
 import chromium from '@sparticuz/chromium';
-import { deleteTempBucketItems, deleteTempTableItems } from './handler/temp-service';
+import { deleteTempBucketItems, deleteTempRotateTableItems, deleteTempTableItems } from './handler/temp-service';
 import { shredAnytimeMails } from './handler/puppeteer-service';
+import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
 
 
 export const handler = async (event: any) => {
     const body = typeof event.InputParameters.body === 'string' ? JSON.parse(event.InputParameters.body || '{}') : event.InputParameters.body;
     const { anytimeAspNetSessionId } = body;
-    
+
     const idsArray = typeof event.Payload === 'string' ? JSON.parse(event.Payload || '[]') : event.Payload;
 
     const browser = await puppeteer.launch({
@@ -27,30 +28,47 @@ export const handler = async (event: any) => {
             value: anytimeAspNetSessionId,
             domain: 'packmail.anytimemailbox.com',
         });
-
         const cookies = {
             'ASP.NET_SessionId': anytimeAspNetSessionId
         };
 
-        const mailIds = idsArray.map((item: {id: string}) => item.id).join(', ');
+        const mailIds = idsArray.filter((item: { id: string }) => !!item?.id).map((item: { id: string }) => item.id);
 
-        await shredAnytimeMails(page, mailIds, cookies);
+        await Promise.all(
+            mailIds.map(async (id: string) => {
+                const mail = await getMailFromDynamoDB(Number(id));
+                if (mail) {
+                    await updateMailInDynamoDB({
+                        ...mail,
+                        is_shredded: true
+                    });
+                }
+            })
+        );
 
+        // call shred in anytimemailbox
+        const mailIdsString = mailIds.join(', ');
+        await shredAnytimeMails(page, mailIdsString, cookies);
+
+        // delete temporary folders and tables for text extreact
         await deleteTempTableItems();
-
+        await deleteTempRotateTableItems();
         await deleteTempBucketItems();
 
         return {
             statusCode: 200,
-            body: {
+            body: JSON.stringify({
                 message: 'Complete'
-            },
+            }),
         };
     } catch (error) {
         console.error('Error during processing:', error);
         return {
             statusCode: 500,
-            body: JSON.stringify({ message: 'Internal server error', error: error, toNextPage: false }),
+            body: JSON.stringify({
+                message: 'Internal server error',
+                error: error,
+            }),
         };
     } finally {
         await browser.close();
