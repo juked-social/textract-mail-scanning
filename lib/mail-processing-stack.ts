@@ -102,9 +102,10 @@ export class MailProcessingStack extends cdk.Stack {
             entry: path.join(__dirname, 'lambda', 'call-api.ts'),
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
-                API_TOKEN: '6232|853jtkmoXcAqapxnYOtSUw1EufjepTiJDEfWjWhZ',
                 REGION: this.region,
             },
+            memorySize: 1024, // Set memory size to 1024 MB
+            timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
         });
 
         const rotateImageLambda = new NodejsFunction(this, 'TextractRotateLambda', {
@@ -186,7 +187,9 @@ export class MailProcessingStack extends cdk.Stack {
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 TEMP_BUCKET_NAME: imageBucket.bucketName,
+                IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 TEMP_TABLE_NAME: textractAsyncTask.taskTokenTableName,
+                TEMP_ROTATE_TABLE_NAME: textractAsyncRotateTask.taskTokenTableName,
                 REGION: this.region,
                 S3_TEMP_OUTPUT_PREFIX: S3_TEMP_OUTPUT_PREFIX,
             },
@@ -288,7 +291,9 @@ export class MailProcessingStack extends cdk.Stack {
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
         mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
         mailMetadataTable.grantReadWriteData(callApiLambda);
+        mailMetadataTable.grantReadWriteData(completionLambda);
         textractAsyncTask.taskTokenTable.grantReadWriteData(completionLambda);
+        textractAsyncRotateTask.taskTokenTable.grantReadWriteData(completionLambda);
 
         // Grant textract lambda permission to textract
         textractLambda.addToRolePolicy(new PolicyStatement({
@@ -331,7 +336,7 @@ export class MailProcessingStack extends cdk.Stack {
         );
 
         const checkMorePages = new Choice(this, 'CheckIfMorePages')
-            .when(Condition.booleanEquals('$.body.toNextPage', false),
+            .when(Condition.booleanEquals('$.body.toNextPage', true),
                 new Wait(this, 'wait', { time: WaitTime.duration(cdk.Duration.seconds(5)) }).next(mailFetchingTask))
             .otherwise(s3ProcessingTask)
             .afterwards();
