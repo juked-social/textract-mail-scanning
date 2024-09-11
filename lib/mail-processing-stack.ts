@@ -20,6 +20,7 @@ import {
     IntegrationPattern,
     TaskInput,
     JsonPath,
+    Pass,
 } from 'aws-cdk-lib/aws-stepfunctions';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
@@ -96,6 +97,17 @@ export class MailProcessingStack extends cdk.Stack {
             },
         });
 
+        const callApiLambda = new NodejsFunction(this, 'CallApiLambda', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            entry: path.join(__dirname, 'lambda', 'call-api.ts'),
+            environment: {
+                MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
+                REGION: this.region,
+            },
+            memorySize: 1024, // Set memory size to 1024 MB
+            timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
+        });
+
         const rotateImageLambda = new NodejsFunction(this, 'TextractRotateLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'rotate-image.ts'),
@@ -127,17 +139,6 @@ export class MailProcessingStack extends cdk.Stack {
             bundling: {
                 nodeModules: ['fast-levenshtein'],
             }
-        });
-
-        const validatorLambda = new NodejsFunction(this, 'ValidatorLambda', {
-            runtime: lambda.Runtime.NODEJS_18_X,
-            entry: path.join(__dirname, 'lambda', 'validator.ts'),
-            memorySize: 1024, // Set memory size to 1024 MB
-            environment: {
-                MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
-                REGION: this.region,
-            },
-            timeout: cdk.Duration.minutes(2)
         });
 
         const textractAsyncTask = new TextractGenericAsyncSfnTask(
@@ -186,7 +187,9 @@ export class MailProcessingStack extends cdk.Stack {
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 TEMP_BUCKET_NAME: imageBucket.bucketName,
+                IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 TEMP_TABLE_NAME: textractAsyncTask.taskTokenTableName,
+                TEMP_ROTATE_TABLE_NAME: textractAsyncRotateTask.taskTokenTableName,
                 REGION: this.region,
                 S3_TEMP_OUTPUT_PREFIX: S3_TEMP_OUTPUT_PREFIX,
             },
@@ -247,8 +250,8 @@ export class MailProcessingStack extends cdk.Stack {
         const afterTextractTask = new LambdaInvoke(this, 'TextractTask', {
             lambdaFunction: textractLambda,
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', // Pass the initial input to the completion task
-                'Payload.$': '$' // Keep the payload from previous steps
+                'InputParameters.$': '$$.Execution.Input', 
+                'Payload.$': '$' 
             }),
             outputPath: '$.Payload',
         });
@@ -256,17 +259,8 @@ export class MailProcessingStack extends cdk.Stack {
         const afterTextractRotateTask = new LambdaInvoke(this, 'TextractRotateTask', {
             lambdaFunction: textractLambda,
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', // Pass the initial input to the completion task
-                'Payload.$': '$' // Keep the payload from previous steps
-            }),
-            outputPath: '$.Payload',
-        });
-
-        const validatorTask = new LambdaInvoke(this, 'ValidatorTask', {
-            lambdaFunction: validatorLambda,
-            payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', // Pass the initial input to the completion task
-                'Payload.$': '$' // Keep the payload from previous steps
+                'InputParameters.$': '$$.Execution.Input', 
+                'Payload.$': '$' 
             }),
             outputPath: '$.Payload',
         });
@@ -275,8 +269,17 @@ export class MailProcessingStack extends cdk.Stack {
             lambdaFunction: completionLambda,
             outputPath: '$.Payload',
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', // Pass the initial input to the completion task
-                'Payload.$': '$' // Keep the payload from previous steps
+                'InputParameters.$': '$$.Execution.Input', 
+                'Payload.$': '$' 
+            }),
+        });
+
+        const callApiTask = new LambdaInvoke(this, 'CallApiTask', {
+            lambdaFunction: callApiLambda,
+            outputPath: '$.Payload',
+            payload: TaskInput.fromObject({
+                'InputParameters.$': '$$.Execution.Input', 
+                'Payload.$': '$' 
             }),
         });
 
@@ -287,8 +290,10 @@ export class MailProcessingStack extends cdk.Stack {
         mailMetadataTable.grantReadWriteData(textractLambda);
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
         mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
-        mailMetadataTable.grantReadWriteData(validatorLambda);
+        mailMetadataTable.grantReadWriteData(callApiLambda);
+        mailMetadataTable.grantReadWriteData(completionLambda);
         textractAsyncTask.taskTokenTable.grantReadWriteData(completionLambda);
+        textractAsyncRotateTask.taskTokenTable.grantReadWriteData(completionLambda);
 
         // Grant textract lambda permission to textract
         textractLambda.addToRolePolicy(new PolicyStatement({
@@ -309,9 +314,8 @@ export class MailProcessingStack extends cdk.Stack {
                     .next(addQueriesRotateTask)
                     .next(textractAsyncRotateTask)
                     .next(afterTextractRotateTask)
-                    .next(validatorTask)
             )
-            .otherwise(validatorTask)
+            .otherwise(new Pass(this, 'else-block-pass'))
             .afterwards();
 
         const textractChain = Chain
@@ -341,6 +345,7 @@ export class MailProcessingStack extends cdk.Stack {
 
         const definition = mailFetchingChain
             .next(textractMapTask)
+            .next(callApiTask)
             .next(completionTask);
 
         // Create the State Machine

@@ -1,4 +1,3 @@
-// Define headers outside functions to avoid unnecessary object creation
 import { Page } from 'puppeteer';
 import { AnytimeMailBox, Mail, AnytimeMailPageInfo } from '../entry/mail';
 import { parse } from 'date-fns';
@@ -137,8 +136,7 @@ export const shredAnytimeMails = async (page: Page, mailIds: string, cookies: {}
         const response = await fetch('https://packmail.anytimemailbox.com/app/mail-ajax/pendingcheck', {
             method: 'POST',
             headers: new Headers(headers),
-            // todo apply mailIds
-            body: new URLSearchParams({ malids: '' }),
+            body: new URLSearchParams({ malids: mailIds }),
             credentials: 'include',
         } as RequestInit);
 
@@ -154,8 +152,7 @@ export const shredAnytimeMails = async (page: Page, mailIds: string, cookies: {}
             const response = await fetch('https://packmail.anytimemailbox.com/app/mail-ajax/action', {
                 method: 'POST',
                 headers: new Headers(headers),
-                // TODO(): apply mailIds
-                body: new URLSearchParams({ ids: '', status: '81' }),
+                body: new URLSearchParams({ ids: mailIds, status: '81' }),
                 credentials: 'include',
             } as RequestInit);
 

@@ -17,7 +17,7 @@ interface LambdaEvent {
 export const handler = async (event: LambdaEvent) => {
     const body = typeof event.body === 'string' ? JSON.parse(event.body || '{}') : event.body;
 
-    const { startDate, endDate, anytimeAspNetSessionId, refTimestamp = '0' } = body;
+    const { startDate, endDate, anytimeAspNetSessionId, refTimestamp = '0', apiToken = '' } = body;
 
     if (!startDate || !endDate || !anytimeAspNetSessionId) {
         return {
@@ -65,13 +65,14 @@ export const handler = async (event: LambdaEvent) => {
                 startDate,
                 endDate,
                 anytimeAspNetSessionId,
+                apiToken,
             },
         };
     } catch (error) {
         console.error('Error during processing:', error);
         return {
             statusCode: 500,
-            body: JSON.stringify({ message: 'Internal server error', error: error, toNextPage: false }),
+            body: { message: 'Internal server error', error: error, toNextPage: false },
         };
     } finally {
         await browser.close();

@@ -10,6 +10,7 @@ export type Mail = {
     address?: string,
     is_valid?: boolean,
     handwritten_confidence?: number,
+    is_shredded?: boolean,
     creationDate: string,
     assignedDate: string,
     lastActionDate: string,
