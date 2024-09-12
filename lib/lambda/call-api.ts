@@ -1,21 +1,23 @@
 import { getAllMails } from './handler/mail-service';
+import { getSecret } from './handler/secret-manager';
 
-const apiUrl = 'https://api.goldsink.com/aws/post-cards';
+const SECRET_ARN = process.env.SECRET_ARN || '';
+const API_URL = process.env.API_URL || '';
 
 export const handler = async (event: any) => {
     try {
-        const body = typeof event.InputParameters.body === 'string' ? JSON.parse(event.InputParameters.body || '{}') : event.InputParameters.body;
-        const { apiToken } = body;
+        const secret = await getSecret(SECRET_ARN);
+        const apiToken = secret?.apiToken || '';
 
         const postData = await getAllMails();
 
         const transformedData = postData.map(mail => ({
             ...mail,
-            assigned_date: mail.assignedDate })
-        );
+            assigned_date: mail.assignedDate
+        }));
 
         // Make POST request with postData
-        const response = await fetch(apiUrl, {
+        const response = await fetch(`${API_URL}/aws/post-cards`, {
             method: 'POST',
             headers: {
                 'Accept': 'application/json',
@@ -33,6 +35,8 @@ export const handler = async (event: any) => {
 
         // Parse and log the response data
         const responseData = await response.json();
+
+        console.log(responseData);
         const data = typeof responseData === 'string' ? JSON.parse(responseData || '{}') : responseData;
 
         if(!data || !data?.result?.shred){
