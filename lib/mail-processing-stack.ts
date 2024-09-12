@@ -2,10 +2,13 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as events from 'aws-cdk-lib/aws-events';
 import * as path from 'path';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { Code, Runtime, Function, Architecture } from 'aws-cdk-lib/aws-lambda';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import {
@@ -27,13 +30,22 @@ import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { TextractGenericAsyncSfnTask, TextractPOCDecider } from 'amazon-textract-idp-cdk-constructs';
 import { Duration } from 'aws-cdk-lib';
 
-
 export class MailProcessingStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
         const S3_TEMP_OUTPUT_PREFIX = 'mail-textract-temp-output';
 
+        // Create a Secrets Manager secret to store sensitive information
+        const secret = new secretsmanager.Secret(this, 'MailTextractSecret', {
+            secretName: 'mail-textract-secret', // The name of the secret
+            secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({
+                anytimeAspNetSessionId: 'xs0uk0laqrmdmlznst3yqhon', // Session ID for Anytime Mailbox
+                apiToken: '6519|SZxtqwItf2hJRiGoOO2s09AQPEmq8XbUQ5CAIi3S' // API token for authentication
+            })),
+        });
+
+        // Create an S3 bucket to store images with a removal policy for development purposes
         const imageBucket = new Bucket(this, 'MailImageBucket', {
             removalPolicy: cdk.RemovalPolicy.DESTROY, // Only for dev environments
         });
@@ -81,6 +93,7 @@ export class MailProcessingStack extends cdk.Stack {
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
+                SECRET_ARN: secret.secretArn
             },
             bundling: {
                 externalModules: ['aws-sdk', '@sparticuz/chromium'] // Add any external modules here
@@ -103,6 +116,8 @@ export class MailProcessingStack extends cdk.Stack {
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
+                SECRET_ARN: secret.secretArn,
+                API_URL: 'https://api.goldsink.com',
             },
             memorySize: 1024, // Set memory size to 1024 MB
             timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
@@ -192,6 +207,7 @@ export class MailProcessingStack extends cdk.Stack {
                 TEMP_ROTATE_TABLE_NAME: textractAsyncRotateTask.taskTokenTableName,
                 REGION: this.region,
                 S3_TEMP_OUTPUT_PREFIX: S3_TEMP_OUTPUT_PREFIX,
+                SECRET_ARN: secret.secretArn
             },
             bundling: {
                 externalModules: ['aws-sdk', '@sparticuz/chromium'] // Add any external modules here
@@ -295,6 +311,19 @@ export class MailProcessingStack extends cdk.Stack {
         textractAsyncTask.taskTokenTable.grantReadWriteData(completionLambda);
         textractAsyncRotateTask.taskTokenTable.grantReadWriteData(completionLambda);
 
+        // Attach a policy to the Lambda execution role
+        mailFetchingLambda.addToRolePolicy(new PolicyStatement({
+            actions: ['secretsmanager:GetSecretValue'],
+            resources: [secret.secretArn],
+        }));
+        callApiLambda.addToRolePolicy(new PolicyStatement({
+            actions: ['secretsmanager:GetSecretValue'],
+            resources: [secret.secretArn],
+        }));
+        completionLambda.addToRolePolicy(new PolicyStatement({
+            actions: ['secretsmanager:GetSecretValue'],
+            resources: [secret.secretArn],
+        }));
         // Grant textract lambda permission to textract
         textractLambda.addToRolePolicy(new PolicyStatement({
             actions: ['bedrock:InvokeModel'],
@@ -373,5 +402,15 @@ export class MailProcessingStack extends cdk.Stack {
         // Create a resource and method for the API
         const mails = api.root.addResource('mails');
         mails.addMethod('POST', new apigateway.LambdaIntegration(triggerLambda));
+
+        // Define the EventBridge rule
+        new events.Rule(this, 'ScheduledRule', {
+            schedule: events.Schedule.cron({ minute: '0', hour: '0' }),
+            targets: [new targets.LambdaFunction(triggerLambda, {
+                event: events.RuleTargetInput.fromObject({
+                    body: { }
+                })
+            })],
+        });
     }
 }
