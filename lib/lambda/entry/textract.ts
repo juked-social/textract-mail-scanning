@@ -51,7 +51,6 @@ export interface InputParameters {
 export interface Body {
     startDate: string
     endDate: string
-    anytimeAspNetSessionId: string
 }
 
 

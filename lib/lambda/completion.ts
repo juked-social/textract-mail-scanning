@@ -3,11 +3,13 @@ import chromium from '@sparticuz/chromium';
 import { deleteTempBucketItems, deleteTempRotateTableItems, deleteTempTableItems } from './handler/temp-service';
 import { shredAnytimeMails } from './handler/puppeteer-service';
 import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
+import { getSecret } from './handler/secret-manager';
 
+const SECRET_ARN = process.env.SECRET_ARN || '';
 
 export const handler = async (event: any) => {
-    const body = typeof event.InputParameters.body === 'string' ? JSON.parse(event.InputParameters.body || '{}') : event.InputParameters.body;
-    const { anytimeAspNetSessionId } = body;
+    const secret = await getSecret(SECRET_ARN);
+    const anytimeAspNetSessionId = secret?.anytimeAspNetSessionId || '';
 
     const idsArray = typeof event.Payload === 'string' ? JSON.parse(event.Payload || '[]') : event.Payload;
 
