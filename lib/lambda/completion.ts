@@ -34,10 +34,10 @@ export const handler = async (event: any) => {
             'ASP.NET_SessionId': anytimeAspNetSessionId
         };
 
-        const mailIds = idsArray.filter((item: { id: string }) => !!item?.id).map((item: { id: string }) => item.id);
+        const mailIds = idsArray?.filter((item: { id: string }) => !!item?.id)?.map((item: { id: string }) => item.id) || [];
 
         await Promise.all(
-            mailIds.map(async (id: string) => {
+            mailIds?.map(async (id: string) => {
                 const mail = await getMailFromDynamoDB(Number(id));
                 if (mail) {
                     await updateMailInDynamoDB({
@@ -49,7 +49,7 @@ export const handler = async (event: any) => {
         );
 
         // call shred in anytimemailbox
-        const mailIdsString = mailIds.join(', ');
+        const mailIdsString = mailIds?.join(', ');
         await shredAnytimeMails(page, mailIdsString, cookies);
 
         // delete temporary folders and tables for text extreact

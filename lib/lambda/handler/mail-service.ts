@@ -15,6 +15,7 @@ import {
     ScanCommandInput,
 } from '@aws-sdk/lib-dynamodb';
 
+
 // Initialize DynamoDB client
 const AWS_REGION = process.env.REGION;
 const TABLE_NAME = process.env.MAIL_METADATA_TABLE_NAME;
