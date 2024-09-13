@@ -68,7 +68,6 @@ export const handler = async (event: LambdaEvent) => {
                 refTimestamp: anytimeMailPageInfo.refTimestamp,
                 startDate,
                 endDate,
-                anytimeAspNetSessionId,
             },
         };
     } catch (error) {
