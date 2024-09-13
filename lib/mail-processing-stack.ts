@@ -103,6 +103,8 @@ export class MailProcessingStack extends cdk.Stack {
         const s3ProcessingLambda = new NodejsFunction(this, 'S3ProcessingLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 's3-processor.ts'),
+            memorySize: 512, // Set memory size to 1024 MB
+            timeout: cdk.Duration.minutes(5), // Set timeout to 10 minutes
             environment: {
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
@@ -324,6 +326,7 @@ export class MailProcessingStack extends cdk.Stack {
             actions: ['secretsmanager:GetSecretValue'],
             resources: [secret.secretArn],
         }));
+
         // Grant textract lambda permission to textract
         textractLambda.addToRolePolicy(new PolicyStatement({
             actions: ['bedrock:InvokeModel'],
