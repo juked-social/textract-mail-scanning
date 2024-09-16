@@ -1,5 +1,6 @@
 import { Page } from 'puppeteer';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { splitS3Url } from './utils';
 
 const s3 = new S3Client({ region: process.env.REGION });
 const bucketName = process.env.IMAGE_BUCKET_NAME; // The S3 bucket name
@@ -34,5 +35,26 @@ export async function downloadAndSaveImage(page: Page, imageUrl: string, imageKe
     } catch (error) {
         console.error(`Error saving image to S3: ${error}`);
         return '';
+    }
+}
+
+
+// Function to delete an image from S3
+export async function deleteImageFromS3(imageKey: string): Promise<void> {
+    try {
+        const { key } = splitS3Url(imageKey);
+
+        // Create a delete command
+        const command = new DeleteObjectCommand({
+            Bucket: bucketName!,
+            Key: key,
+        });
+
+        // Send the delete command to S3
+        await s3.send(command);
+
+        console.log(`Successfully deleted image from S3 with key ${imageKey}`);
+    } catch (error) {
+        console.error(`Error deleting image from S3: ${error}`);
     }
 }

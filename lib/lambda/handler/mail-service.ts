@@ -10,8 +10,10 @@ import {
     UpdateCommand,
     UpdateCommandInput,
     ScanCommand,
+    DeleteCommand,
+    ScanCommandOutput,
+    ScanCommandInput,
 } from '@aws-sdk/lib-dynamodb';
-import { unmarshall } from '@aws-sdk/util-dynamodb';
 
 // Initialize DynamoDB client
 const AWS_REGION = process.env.REGION;
@@ -58,6 +60,13 @@ const getAttributeValues = (mail: Mail) => ({
     ':creationDate': mail.creationDate,
     ':assignedDate': mail.assignedDate,
     ':lastActionDate': mail.lastActionDate,
+    ':code': mail.code || '',
+    ':user_full_name': mail.user_full_name || '',
+    ':email': mail.email || '',
+    ':address': mail.address || '',
+    ':is_valid': mail.is_valid || false,
+    ':reason': mail.reason || '',
+    ':is_shredded': mail.is_shredded || false
 });
 
 // Function to save mail to DynamoDB
@@ -89,7 +98,14 @@ export async function updateMailInDynamoDB(mail: Mail) {
                     #image_path = :image_path,
                     #creationDate = :creationDate,
                     #assignedDate = :assignedDate,
-                    #lastActionDate = :lastActionDate
+                    #lastActionDate = :lastActionDate,
+                    #code = :code,
+                    #user_full_name = :user_full_name,
+                    #email = :email,
+                    #address = :address,
+                    #is_valid = :is_valid,
+                    #reason = :reason,
+                    #is_shredded = :is_shredded
             `,
             ExpressionAttributeValues: getAttributeValues(mail),
             ExpressionAttributeNames: {
@@ -98,6 +114,13 @@ export async function updateMailInDynamoDB(mail: Mail) {
                 '#creationDate': 'creationDate',
                 '#assignedDate': 'assignedDate',
                 '#lastActionDate': 'lastActionDate',
+                '#code': 'code',
+                '#user_full_name': 'user_full_name',
+                '#email': 'email',
+                '#address': 'address',
+                '#is_valid': 'is_valid',
+                '#reason': 'reason',
+                '#is_shredded': 'is_shredded'
             },
             ReturnValues: 'UPDATED_NEW',
         };
@@ -146,4 +169,51 @@ export async function getMailByDates(startDate: string, endDate: string): Promis
         console.error('Error querying items from DynamoDB:', error);
         return [];
     }
+}
+
+
+// Function to delete mail from DynamoDB
+export async function deleteMailFromDynamoDB(malId: number) {
+    await retryOperation(async () => {
+        const params = {
+            TableName: TABLE_NAME,
+            Key: {
+                [PARTITION_KEY_NAME]: PARTITION_KEY_NAME,
+                'any_mail_id': malId
+            },
+        };
+
+        const command = new DeleteCommand(params);
+        await docClient.send(command);
+    });
+}
+
+export async function getAllMails(): Promise<Mail[]> {
+    let allItems: Mail[] = [];
+    let lastEvaluatedKey: Record<string, any> | undefined = undefined;
+
+    do {
+        const params: ScanCommandInput = {
+            TableName: TABLE_NAME,
+            ExclusiveStartKey: lastEvaluatedKey,
+            FilterExpression: 'is_valid = :true AND is_shredded=:false',
+            ExpressionAttributeValues: {
+                ':true': true,
+                ':false': false,
+            },
+        };
+
+        try {
+            const command = new ScanCommand(params);
+            const result: ScanCommandOutput = await docClient.send(command);
+            const items = result.Items as Mail[] || [];
+            allItems = allItems.concat(items);
+            lastEvaluatedKey = result.LastEvaluatedKey;
+        } catch (error) {
+            console.error('Error scanning DynamoDB table:', error);
+            break;
+        }
+    } while (lastEvaluatedKey);
+
+    return allItems;
 }

@@ -1,11 +1,11 @@
 import puppeteer from 'puppeteer';
 import chromium from '@sparticuz/chromium';
 import { downloadImages, getAnytimeMailPageInfo } from './handler/puppeteer-service';
+import { getSecret } from './handler/secret-manager';
 
 interface EventBody {
     startDate: string;
     endDate: string;
-    anytimeAspNetSessionId: string;
     refTimestamp?: string;
 }
 
@@ -13,10 +13,15 @@ interface LambdaEvent {
     body: string | EventBody;
 }
 
+const SECRET_ARN = process.env.SECRET_ARN || '';
+
 export const handler = async (event: LambdaEvent) => {
     const body = typeof event.body === 'string' ? JSON.parse(event.body || '{}') : event.body;
+    const { startDate, endDate, refTimestamp = '0' } = body;
 
-    const { startDate, endDate, anytimeAspNetSessionId, refTimestamp = '0' } = body;
+    const secret = await getSecret(SECRET_ARN);
+    const anytimeAspNetSessionId = secret?.anytimeAspNetSessionId || '';
+
 
     if (!startDate || !endDate || !anytimeAspNetSessionId) {
         return {
@@ -63,14 +68,13 @@ export const handler = async (event: LambdaEvent) => {
                 refTimestamp: anytimeMailPageInfo.refTimestamp,
                 startDate,
                 endDate,
-                anytimeAspNetSessionId,
             },
         };
     } catch (error) {
         console.error('Error during processing:', error);
         return {
             statusCode: 500,
-            body: JSON.stringify({ message: 'Internal server error', error: error, toNextPage: false }),
+            body: { message: 'Internal server error', error: error, toNextPage: false },
         };
     } finally {
         await browser.close();

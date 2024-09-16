@@ -1,4 +1,3 @@
-// Define headers outside functions to avoid unnecessary object creation
 import { Page } from 'puppeteer';
 import { AnytimeMailBox, Mail, AnytimeMailPageInfo } from '../entry/mail';
 import { parse } from 'date-fns';
@@ -77,7 +76,10 @@ export async function getAnytimeMailPageInfo(page: Page, startDate: Date, endDat
 
             if (existingMail) {
                 // Update existing mail
-                await updateMailInDynamoDB(mailData);
+                await updateMailInDynamoDB({
+                    ...existingMail,
+                    ...mailData
+                });
             } else {
                 // Save new mail
                 await saveMailToDynamoDB(mailData);
@@ -134,8 +136,7 @@ export const shredAnytimeMails = async (page: Page, mailIds: string, cookies: {}
         const response = await fetch('https://packmail.anytimemailbox.com/app/mail-ajax/pendingcheck', {
             method: 'POST',
             headers: new Headers(headers),
-            // todo apply mailIds
-            body: new URLSearchParams({ malids: '' }),
+            body: new URLSearchParams({ malids: mailIds }),
             credentials: 'include',
         } as RequestInit);
 
@@ -146,22 +147,18 @@ export const shredAnytimeMails = async (page: Page, mailIds: string, cookies: {}
         return response.json();
     }, mailIds, headers, cookies);
 
-    console.log('request', request);
-
     if(request.success){
         const result = await page.evaluate(async (mailIds, headers, cookies) => {
             const response = await fetch('https://packmail.anytimemailbox.com/app/mail-ajax/action', {
                 method: 'POST',
                 headers: new Headers(headers),
-                // todo apply mailIds
-                body: new URLSearchParams({ ids: '', status: '81' }),
+                body: new URLSearchParams({ ids: mailIds, status: '81' }),
                 credentials: 'include',
             } as RequestInit);
 
             if (!response.ok) {
                 throw new Error('Network response was not ok');
             }
-
             return response.json();
         }, mailIds, headers, cookies);
 

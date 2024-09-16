@@ -35,3 +35,33 @@ export function splitS3Url(s3Url: string): S3UrlParts {
         key,
     };
 }
+
+// Function to fix an incomplete JSON string
+export function fixIncompleteJSON(jsonString:string): string {
+    jsonString = jsonString.trim();
+
+    // Fix missing quotes
+    const openQuotes = (jsonString.match(/"/g) || []).length;
+    if (openQuotes % 2 !== 0) {
+        jsonString += '"';
+    }
+
+    // Fix missing closing braces
+    const openBraces = (jsonString.match(/{/g) || []).length;
+    const closeBraces = (jsonString.match(/}/g) || []).length;
+    const missingBraces = openBraces - closeBraces;
+    for (let i = 0; i < missingBraces; i++) {
+        jsonString += '}';
+    }
+
+    // Fix missing closing brackets
+    const openBrackets = (jsonString.match(/\[/g) || []).length;
+    const closeBrackets = (jsonString.match(/]/g) || []).length;
+    const missingBrackets = openBrackets - closeBrackets;
+    for (let i = 0; i < missingBrackets; i++) {
+        jsonString += ']';
+    }
+
+    return JSON.stringify(jsonString);
+}
+
