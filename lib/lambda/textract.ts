@@ -11,6 +11,7 @@ import { BedrockRuntimeClient, InvokeModelCommand, InvokeModelResponse } from '@
 import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
 import { Mail } from './entry/mail';
 import * as levenshtein from 'fast-levenshtein';
+import { cleanTextFromS3 } from './handler/temp-service';
 
 const bedrockClient = new BedrockRuntimeClient({ region: process.env.REGION });
 
@@ -202,6 +203,8 @@ export const handler = async (event: TextractInterface) => {
             extractedInfo = JSON.parse(extractedInfo);
         }
 
+        await cleanTextFromS3(bucket, key);
+
         const formattedResponse = {
             handwritten_confidence: 0.85,
             ...extractedInfo
@@ -213,6 +216,7 @@ export const handler = async (event: TextractInterface) => {
         formattedResponse.message = formattedResponse.message ? formattedResponse.message.replace(/[^a-zA-Z0-9@.\s]/g, '') : '';
 
         const mail = await getMailFromDynamoDB(Number(anyMailId));
+
         if (mail) {
             const is_valid_reason = isValid(formattedResponse);
 
@@ -232,6 +236,7 @@ export const handler = async (event: TextractInterface) => {
         }
     }catch (error){
         console.log(`Error extracting text: error=${error}`);
+        throw new Error(`Error extracting text: error=${error}`);
     }
 
     return { id: '', s3Path: originalFilePath };

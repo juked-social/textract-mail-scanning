@@ -87,7 +87,7 @@ export class MailProcessingStack extends cdk.Stack {
             entry: path.join(__dirname, 'lambda', 'mail-fetcher.ts'),
             layers: [layerChrome, layerDateFns],
             memorySize: 1024, // Set memory size to 1024 MB
-            timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
+            timeout: cdk.Duration.minutes(15), // Set timeout to 15 minutes
             architecture: lambda.Architecture.X86_64,
             environment: {
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
@@ -303,7 +303,7 @@ export class MailProcessingStack extends cdk.Stack {
 
         imageBucket.grantReadWrite(mailFetchingLambda);
         imageBucket.grantReadWrite(rotateImageLambda);
-        imageBucket.grantRead(textractLambda);
+        imageBucket.grantReadWrite(textractLambda);
         imageBucket.grantReadWrite(completionLambda);
         mailMetadataTable.grantReadWriteData(textractLambda);
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
@@ -390,6 +390,9 @@ export class MailProcessingStack extends cdk.Stack {
         const triggerLambda = new NodejsFunction(this, 'TriggerLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'trigger.ts'),
+            layers: [layerDateFns],
+            memorySize: 1024, // Set memory size to 1024 MB
+            timeout: cdk.Duration.minutes(2), // Set timeout to 2 minutes
             environment: {
                 STATE_MACHINE_ARN: stateMachine.stateMachineArn,
             },
