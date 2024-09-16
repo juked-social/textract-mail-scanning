@@ -24,10 +24,7 @@ export const handler = async (event: LambdaEvent) => {
 
 
     if (!startDate || !endDate || !anytimeAspNetSessionId) {
-        return {
-            statusCode: 400,
-            body: JSON.stringify({ message: 'Missing required parameters' }),
-        };
+        throw new Error('Missing required parameters');
     }
 
     const browser = await puppeteer.launch({
@@ -72,10 +69,7 @@ export const handler = async (event: LambdaEvent) => {
         };
     } catch (error) {
         console.error('Error during processing:', error);
-        return {
-            statusCode: 500,
-            body: { message: 'Internal server error', error: error, toNextPage: false },
-        };
+        throw new Error('Error during processing: ' + error);
     } finally {
         await browser.close();
     }

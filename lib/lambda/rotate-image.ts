@@ -68,6 +68,7 @@ export const handler = async (event: any) => {
         }
     } catch (error) {
         console.error('Error during processing:', error);
+        throw new Error('Error during processing: ' + error);
     }
     return { s3Path };
 };

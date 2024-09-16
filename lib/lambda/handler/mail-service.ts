@@ -147,29 +147,40 @@ export async function getMailFromDynamoDB(malId: number) {
         return result.Item as Mail | null;
     } catch (error) {
         console.error('Error fetching mail from DynamoDB:', error);
-        return null;
+        throw new Error('Error querying items from DynamoDB: ' + error);
     }
 }
 
 // Function to get mail by date range
 export async function getMailByDates(startDate: string, endDate: string): Promise<Mail[]> {
-    const params = {
-        TableName: TABLE_NAME,
-        FilterExpression: 'assignedDate BETWEEN :startDate AND :endDate',
-        ExpressionAttributeValues: {
-            ':startDate': startDate,
-            ':endDate': endDate,
-        },
-    };
+    console.log(startDate, endDate);
+    let allItems: Mail[] = [];
+    let lastEvaluatedKey: Record<string, any> | undefined = undefined;
 
-    try {
-        const command = new ScanCommand(params);
-        const data = await docClient.send(command);
-        return data.Items as Mail[] || [];
-    } catch (error) {
-        console.error('Error querying items from DynamoDB:', error);
-        return [];
-    }
+    do {
+        const params: ScanCommandInput = {
+            TableName: TABLE_NAME,
+            ExclusiveStartKey: lastEvaluatedKey,
+            FilterExpression: 'assignedDate BETWEEN :startDate AND :endDate',
+            ExpressionAttributeValues: {
+                ':startDate': startDate,
+                ':endDate': endDate,
+            },
+        };
+
+        try {
+            const command = new ScanCommand(params);
+            const result: ScanCommandOutput = await docClient.send(command);
+            const items = result.Items as Mail[] || [];
+            allItems = allItems.concat(items);
+            lastEvaluatedKey = result.LastEvaluatedKey;
+        } catch (error) {
+            console.error('Error scanning DynamoDB table:', error);
+            break;
+        }
+    } while (lastEvaluatedKey);
+
+    return allItems;
 }
 
 

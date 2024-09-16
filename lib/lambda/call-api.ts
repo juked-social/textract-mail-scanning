@@ -76,10 +76,10 @@ export const handler = async (event: any): Promise<any[]> => {
             return [];
         }
 
-        return results.map((id: string) => ({ id }));
+        return results?.map((id: string) => ({ id }));
     } catch (error) {
         console.error('Error:', error);
 
-        return [];
+        throw new Error('Failed to process mail data');
     }
 };
