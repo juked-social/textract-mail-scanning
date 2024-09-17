@@ -5,6 +5,16 @@ import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-servic
 import { getSecret } from './handler/secret-manager';
 
 const SECRET_ARN = process.env.SECRET_ARN || '';
+const CHUNK_SIZE = 20; // Define the chunk size based on your requirements
+
+// Function to split an array into chunks
+const chunkArray = (array: string[], chunkSize: number): string[][] => {
+    const result: string[][] = [];
+    for (let i = 0; i < array.length; i += chunkSize) {
+        result.push(array.slice(i, i + chunkSize));
+    }
+    return result;
+};
 
 export const handler = async (event: any) => {
     const secret = await getSecret(SECRET_ARN);
@@ -48,8 +58,12 @@ export const handler = async (event: any) => {
         );
 
         // call shred in anytimemailbox
-        const mailIdsString = mailIds?.join(', ');
-        await shredAnytimeMails(page, mailIdsString, cookies);
+        const chunks = chunkArray(mailIds, CHUNK_SIZE);
+
+        for (const chunk of chunks) {
+            const mailIdsString = chunk.join(',');
+            await shredAnytimeMails(page, mailIdsString, cookies);
+        }
 
         return {
             statusCode: 200,
