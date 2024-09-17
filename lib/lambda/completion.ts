@@ -1,11 +1,20 @@
 import puppeteer from 'puppeteer';
 import chromium from '@sparticuz/chromium';
-import { deleteTempBucketItems, deleteTempRotateTableItems, deleteTempTableItems } from './handler/temp-service';
 import { shredAnytimeMails } from './handler/puppeteer-service';
 import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
 import { getSecret } from './handler/secret-manager';
 
 const SECRET_ARN = process.env.SECRET_ARN || '';
+const CHUNK_SIZE = 20; // Define the chunk size based on your requirements
+
+// Function to split an array into chunks
+const chunkArray = (array: string[], chunkSize: number): string[][] => {
+    const result: string[][] = [];
+    for (let i = 0; i < array.length; i += chunkSize) {
+        result.push(array.slice(i, i + chunkSize));
+    }
+    return result;
+};
 
 export const handler = async (event: any) => {
     const secret = await getSecret(SECRET_ARN);
@@ -49,13 +58,12 @@ export const handler = async (event: any) => {
         );
 
         // call shred in anytimemailbox
-        const mailIdsString = mailIds?.join(', ');
-        await shredAnytimeMails(page, mailIdsString, cookies);
+        const chunks = chunkArray(mailIds, CHUNK_SIZE);
 
-        // delete temporary folders and tables for text extreact
-        await deleteTempTableItems();
-        await deleteTempRotateTableItems();
-        await deleteTempBucketItems();
+        for (const chunk of chunks) {
+            const mailIdsString = chunk.join(',');
+            await shredAnytimeMails(page, mailIdsString, cookies);
+        }
 
         return {
             statusCode: 200,
@@ -65,13 +73,7 @@ export const handler = async (event: any) => {
         };
     } catch (error) {
         console.error('Error during processing:', error);
-        return {
-            statusCode: 500,
-            body: JSON.stringify({
-                message: 'Internal server error',
-                error: error,
-            }),
-        };
+        throw new Error('Error during processing: ' + error);
     } finally {
         await browser.close();
     }
