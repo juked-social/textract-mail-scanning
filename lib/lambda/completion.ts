@@ -29,6 +29,7 @@ export const handler = async (event: any) => {
             value: anytimeAspNetSessionId,
             domain: 'packmail.anytimemailbox.com',
         });
+
         const cookies = {
             'ASP.NET_SessionId': anytimeAspNetSessionId
         };
@@ -53,9 +54,9 @@ export const handler = async (event: any) => {
 
         return {
             statusCode: 200,
-            body: JSON.stringify({
+            body: {
                 message: 'Complete'
-            }),
+            },
         };
     } catch (error) {
         console.error('Error during processing:', error);
