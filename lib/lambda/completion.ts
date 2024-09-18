@@ -1,6 +1,5 @@
 import puppeteer from 'puppeteer';
 import chromium from '@sparticuz/chromium';
-import { deleteTempBucketItems, deleteTempRotateTableItems, deleteTempTableItems } from './handler/temp-service';
 import { shredAnytimeMails } from './handler/puppeteer-service';
 import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
 import { getSecret } from './handler/secret-manager';
@@ -30,6 +29,7 @@ export const handler = async (event: any) => {
             value: anytimeAspNetSessionId,
             domain: 'packmail.anytimemailbox.com',
         });
+
         const cookies = {
             'ASP.NET_SessionId': anytimeAspNetSessionId
         };
@@ -52,26 +52,15 @@ export const handler = async (event: any) => {
         const mailIdsString = mailIds?.join(', ');
         await shredAnytimeMails(page, mailIdsString, cookies);
 
-        // delete temporary folders and tables for text extreact
-        await deleteTempTableItems();
-        await deleteTempRotateTableItems();
-        await deleteTempBucketItems();
-
         return {
             statusCode: 200,
-            body: JSON.stringify({
+            body: {
                 message: 'Complete'
-            }),
+            },
         };
     } catch (error) {
         console.error('Error during processing:', error);
-        return {
-            statusCode: 500,
-            body: JSON.stringify({
-                message: 'Internal server error',
-                error: error,
-            }),
-        };
+        throw new Error('Error during processing: ' + error);
     } finally {
         await browser.close();
     }

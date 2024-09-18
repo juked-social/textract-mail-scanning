@@ -63,10 +63,12 @@ Compile TypeScript code to JavaScript:
    ```
    
 ### Deployment
+You need to run Docker before deployment.
+
 To deploy your stack, use the `cdk deploy` command. This command will create or update the AWS resources defined in your CDK stack.
 
    ```bash
-   cdk deploy --profile <your profile> --account <your account Id>
+   cdk deploy --profile <your profile>
    ```
 
 ## Configuration

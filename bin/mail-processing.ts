@@ -8,6 +8,6 @@ const app = new cdk.App();
 new MailProcessingStack(app, 'MailProcessingStack', {
     env: {
         account: '911167884854',
-        region: 'us-east-2'
+        region: 'us-east-1'
     }
 });

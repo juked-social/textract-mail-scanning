@@ -117,3 +117,39 @@ export const deleteTempBucketItems = async () => {
         throw error;
     }
 };
+
+
+export async function cleanTextFromS3(bucket: string, folderPrefix: string): Promise<void> {
+    try {
+        console.log(`Clearing folder from S3: bucket=${bucket}, prefix=${folderPrefix}`);
+
+        // Step 1: List all objects in the folder (objects with the specified prefix)
+        const listCommand = new ListObjectsV2Command({
+            Bucket: bucket,
+            Prefix: folderPrefix
+        });
+        const listResult = await s3Client.send(listCommand);
+
+        // Check if the folder has any objects
+        if (!listResult.Contents || listResult.Contents.length === 0) {
+            console.log(`No objects found with prefix ${folderPrefix}`);
+            return;
+        }
+
+        // Step 2: Prepare keys for deletion
+        const objectsToDelete = listResult.Contents.map(item => ({ Key: item.Key! }));
+
+        // Step 3: Delete the objects
+        const deleteCommand = new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: {
+                Objects: objectsToDelete,
+            },
+        });
+        await s3Client.send(deleteCommand);
+        console.log(`All objects in folder with prefix ${folderPrefix} have been deleted.`);
+    } catch (error) {
+        console.log(`Error deleting folder from S3: bucket=${bucket}, prefix=${folderPrefix}, error=${error}`);
+        throw error;
+    }
+}
