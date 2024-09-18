@@ -39,6 +39,7 @@ export const handler = async (event: any) => {
             value: anytimeAspNetSessionId,
             domain: 'packmail.anytimemailbox.com',
         });
+
         const cookies = {
             'ASP.NET_SessionId': anytimeAspNetSessionId
         };
