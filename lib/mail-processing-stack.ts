@@ -24,6 +24,8 @@ import {
     TaskInput,
     JsonPath,
     Pass,
+    ProcessorType,
+    ProcessorMode,
 } from 'aws-cdk-lib/aws-stepfunctions';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
@@ -363,8 +365,14 @@ export class MailProcessingStack extends cdk.Stack {
             itemSelector: {
                 's3Path.$': '$$.Map.Item.Value.s3Key'
             },
-        }).itemProcessor(
-            textractChain
+        });
+
+        textractMapTask.itemProcessor(
+            textractChain,
+            {
+                mode: ProcessorMode.DISTRIBUTED,
+                executionType: ProcessorType.STANDARD,
+            }
         );
 
         const checkMorePages = new Choice(this, 'CheckIfMorePages')
@@ -399,6 +407,11 @@ export class MailProcessingStack extends cdk.Stack {
         });
 
         stateMachine.grantStartExecution(triggerLambda);
+
+        stateMachine.addToRolePolicy(new PolicyStatement({
+            actions: ['states:StartExecution'],
+            resources: ['*'],
+        }));
 
         const api = new apigateway.RestApi(this, 'MailProcessingApi', {
             restApiName: 'Mail Processing Service',

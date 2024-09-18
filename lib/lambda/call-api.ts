@@ -14,7 +14,7 @@ const splitIntoChunks = (array: Mail[], size: number): Mail[][] => {
     return result;
 };
 
-const postChunk = async (chunk: Mail[], apiToken: string): Promise<any[]> => {
+const postChunk = async (chunk: Mail[], apiToken: string) => {
     try {
         const response = await fetch(`${API_URL}/aws/post-cards`, {
             method: 'POST',
@@ -29,21 +29,14 @@ const postChunk = async (chunk: Mail[], apiToken: string): Promise<any[]> => {
         if (!response.ok) {
             const errorText = await response.text(); // Read error response body
             console.log(`HTTP error! status: ${response.status}, text: ${errorText}`);
-            return []; // Return an empty array in case of error
+            return {};
         }
 
         // Parse and return the response data
-        const responseData = await response.json();
-        const data = typeof responseData === 'string' ? JSON.parse(responseData || '{}') : responseData;
-
-        if (!data || !data.result || !data.result.shred) {
-            return [];
-        }
-
-        return data.result.shred || [];
+        return await response.json();
     } catch (error) {
         console.error('Error in postChunk:', error);
-        return [];
+        return {};
     }
 };
 
@@ -66,17 +59,18 @@ export const handler = async (event: any): Promise<any[]> => {
         const results = [];
         for (const chunk of chunks) {
             const responseData = await postChunk(chunk, apiToken);
-            results.push(...responseData); // Use spread operator to flatten the results
+            const data = typeof responseData === 'string' ? JSON.parse(responseData || '{}') : responseData;
+            if (data && data.message === 'Success') {
+                results.push(...chunk);
+            }
         }
-
-        console.log(results);
 
         // Return idsArray directly as the next state expects it
         if (!results || results.length === 0) {
             return [];
         }
 
-        return results?.map((id: string) => ({ id }));
+        return results?.map((mail) => ({ id: mail.any_mail_id }));
     } catch (error) {
         console.error('Error:', error);
 
