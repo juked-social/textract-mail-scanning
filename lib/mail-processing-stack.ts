@@ -114,6 +114,17 @@ export class MailProcessingStack extends cdk.Stack {
             },
         });
 
+        const getImageLambda = new NodejsFunction(this, 'GetImageLambda', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            entry: path.join(__dirname, 'lambda', 'get-image.ts'),
+            memorySize: 512, // Set memory size to 1024 MB
+            timeout: cdk.Duration.minutes(5), // Set timeout to 10 minutes
+            environment: {
+                IMAGE_BUCKET_NAME: imageBucket.bucketName,
+                REGION: this.region,
+            },
+        });
+
         const callApiLambda = new NodejsFunction(this, 'CallApiLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'call-api.ts'),
@@ -306,14 +317,12 @@ export class MailProcessingStack extends cdk.Stack {
         imageBucket.grantReadWrite(mailFetchingLambda);
         imageBucket.grantReadWrite(rotateImageLambda);
         imageBucket.grantReadWrite(textractLambda);
-        imageBucket.grantReadWrite(completionLambda);
+        imageBucket.grantReadWrite(getImageLambda);
         mailMetadataTable.grantReadWriteData(textractLambda);
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
         mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
         mailMetadataTable.grantReadWriteData(callApiLambda);
         mailMetadataTable.grantReadWriteData(completionLambda);
-        textractAsyncTask.taskTokenTable.grantReadWriteData(completionLambda);
-        textractAsyncRotateTask.taskTokenTable.grantReadWriteData(completionLambda);
 
         // Attach a policy to the Lambda execution role
         mailFetchingLambda.addToRolePolicy(new PolicyStatement({
@@ -416,11 +425,17 @@ export class MailProcessingStack extends cdk.Stack {
         const api = new apigateway.RestApi(this, 'MailProcessingApi', {
             restApiName: 'Mail Processing Service',
             description: 'This service automates the process of downloading, processing, validating, and uploading mail data from Anytime Mailbox',
+            deployOptions: {
+                stageName: 'dev',
+            },
         });
 
         // Create a resource and method for the API
         const mails = api.root.addResource('mails');
         mails.addMethod('POST', new apigateway.LambdaIntegration(triggerLambda));
+
+        const getImage = api.root.addResource('get-image');
+        getImage.addMethod('POST', new apigateway.LambdaIntegration(getImageLambda));
 
         // Define the EventBridge rule
         new events.Rule(this, 'ScheduledRule', {
