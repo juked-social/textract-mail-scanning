@@ -161,10 +161,11 @@ export async function getMailByDates(startDate: string, endDate: string): Promis
         const params: ScanCommandInput = {
             TableName: TABLE_NAME,
             ExclusiveStartKey: lastEvaluatedKey,
-            FilterExpression: 'assignedDate BETWEEN :startDate AND :endDate',
+            FilterExpression: 'is_shredded=:false AND assignedDate BETWEEN :startDate AND :endDate',
             ExpressionAttributeValues: {
                 ':startDate': startDate,
                 ':endDate': endDate,
+                ':false': false,
             },
         };
 
