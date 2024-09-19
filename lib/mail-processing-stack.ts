@@ -30,7 +30,6 @@ import {
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { TextractGenericAsyncSfnTask, TextractPOCDecider } from 'amazon-textract-idp-cdk-constructs';
-import { Duration } from 'aws-cdk-lib';
 
 export class MailProcessingStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -42,8 +41,11 @@ export class MailProcessingStack extends cdk.Stack {
         const secret = new secretsmanager.Secret(this, 'MailTextractSecret', {
             secretName: 'mail-textract-secret', // The name of the secret
             secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({
-                anytimeAspNetSessionId: 'xs0uk0laqrmdmlznst3yqhon', // Session ID for Anytime Mailbox
-                apiToken: '6519|SZxtqwItf2hJRiGoOO2s09AQPEmq8XbUQ5CAIi3S' // API token for authentication
+                apiToken: '6519|SZxtqwItf2hJRiGoOO2s09AQPEmq8XbUQ5CAIi3S', // API token for authentication
+                apiToken2Capture: 'b4f22af45ef2998917dd348aff47bc76', // API token for 2Captcha
+                anytimeMailUser: 'aaandre94@gmail.com', // AnytimeMail user
+                anytimeMailPassword: 'XZR-qnb1rvu2bdc1zhj', // AnytimeMail password
+                anytimeMailSiteKey: '6LcYxHEUAAAAAPnZvF9fus2A095V1i2m3rguU3j7' // AnytimeMail SiteKey for reCapture v2
             })),
         });
 
@@ -95,7 +97,6 @@ export class MailProcessingStack extends cdk.Stack {
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
-                SECRET_ARN: secret.secretArn
             },
             bundling: {
                 externalModules: ['aws-sdk', '@sparticuz/chromium'] // Add any external modules here
@@ -110,6 +111,17 @@ export class MailProcessingStack extends cdk.Stack {
             environment: {
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
+                REGION: this.region,
+            },
+        });
+
+        const getImageLambda = new NodejsFunction(this, 'GetImageLambda', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            entry: path.join(__dirname, 'lambda', 'get-image.ts'),
+            memorySize: 512, // Set memory size to 1024 MB
+            timeout: cdk.Duration.minutes(5), // Set timeout to 10 minutes
+            environment: {
+                IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 REGION: this.region,
             },
         });
@@ -205,13 +217,8 @@ export class MailProcessingStack extends cdk.Stack {
             architecture: lambda.Architecture.X86_64,
             environment: {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
-                TEMP_BUCKET_NAME: imageBucket.bucketName,
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
-                TEMP_TABLE_NAME: textractAsyncTask.taskTokenTableName,
-                TEMP_ROTATE_TABLE_NAME: textractAsyncRotateTask.taskTokenTableName,
                 REGION: this.region,
-                S3_TEMP_OUTPUT_PREFIX: S3_TEMP_OUTPUT_PREFIX,
-                SECRET_ARN: secret.secretArn
             },
             bundling: {
                 externalModules: ['aws-sdk', '@sparticuz/chromium'] // Add any external modules here
@@ -240,7 +247,7 @@ export class MailProcessingStack extends cdk.Stack {
                     path.join(__dirname, 'lambda/add-queries/app'),
                 ),
                 architecture: Architecture.X86_64,
-                timeout: Duration.seconds(30),
+                timeout: cdk.Duration.seconds(30),
             },
         );
 
@@ -306,28 +313,12 @@ export class MailProcessingStack extends cdk.Stack {
         imageBucket.grantReadWrite(mailFetchingLambda);
         imageBucket.grantReadWrite(rotateImageLambda);
         imageBucket.grantReadWrite(textractLambda);
-        imageBucket.grantReadWrite(completionLambda);
+        imageBucket.grantReadWrite(getImageLambda);
         mailMetadataTable.grantReadWriteData(textractLambda);
         mailMetadataTable.grantReadWriteData(mailFetchingLambda);
         mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
         mailMetadataTable.grantReadWriteData(callApiLambda);
         mailMetadataTable.grantReadWriteData(completionLambda);
-        textractAsyncTask.taskTokenTable.grantReadWriteData(completionLambda);
-        textractAsyncRotateTask.taskTokenTable.grantReadWriteData(completionLambda);
-
-        // Attach a policy to the Lambda execution role
-        mailFetchingLambda.addToRolePolicy(new PolicyStatement({
-            actions: ['secretsmanager:GetSecretValue'],
-            resources: [secret.secretArn],
-        }));
-        callApiLambda.addToRolePolicy(new PolicyStatement({
-            actions: ['secretsmanager:GetSecretValue'],
-            resources: [secret.secretArn],
-        }));
-        completionLambda.addToRolePolicy(new PolicyStatement({
-            actions: ['secretsmanager:GetSecretValue'],
-            resources: [secret.secretArn],
-        }));
 
         // Grant textract lambda permission to textract
         textractLambda.addToRolePolicy(new PolicyStatement({
@@ -398,16 +389,32 @@ export class MailProcessingStack extends cdk.Stack {
         const triggerLambda = new NodejsFunction(this, 'TriggerLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'trigger.ts'),
-            layers: [layerDateFns],
+            layers: [layerChrome, layerDateFns],
             memorySize: 1024, // Set memory size to 1024 MB
-            timeout: cdk.Duration.minutes(2), // Set timeout to 2 minutes
+            timeout: cdk.Duration.minutes(15), // Set timeout to 15 minutes
+            architecture: lambda.Architecture.X86_64,
+            maxEventAge: cdk.Duration.minutes(15),
             environment: {
                 STATE_MACHINE_ARN: stateMachine.stateMachineArn,
+                REGION: this.region,
+                SECRET_ARN: secret.secretArn
+            },
+            bundling: {
+                externalModules: ['aws-sdk', '@sparticuz/chromium'] // Add any external modules here
             },
         });
 
         stateMachine.grantStartExecution(triggerLambda);
 
+        // Attach a policy to the Lambda execution role
+        triggerLambda.addToRolePolicy(new PolicyStatement({
+            actions: ['secretsmanager:GetSecretValue'],
+            resources: [secret.secretArn],
+        }));
+        callApiLambda.addToRolePolicy(new PolicyStatement({
+            actions: ['secretsmanager:GetSecretValue'],
+            resources: [secret.secretArn],
+        }));
         stateMachine.addToRolePolicy(new PolicyStatement({
             actions: ['states:StartExecution'],
             resources: ['*'],
@@ -416,11 +423,17 @@ export class MailProcessingStack extends cdk.Stack {
         const api = new apigateway.RestApi(this, 'MailProcessingApi', {
             restApiName: 'Mail Processing Service',
             description: 'This service automates the process of downloading, processing, validating, and uploading mail data from Anytime Mailbox',
+            deployOptions: {
+                stageName: 'dev',
+            },
         });
 
         // Create a resource and method for the API
         const mails = api.root.addResource('mails');
         mails.addMethod('POST', new apigateway.LambdaIntegration(triggerLambda));
+
+        const getImage = api.root.addResource('get-image');
+        getImage.addMethod('POST', new apigateway.LambdaIntegration(getImageLambda));
 
         // Define the EventBridge rule
         new events.Rule(this, 'ScheduledRule', {

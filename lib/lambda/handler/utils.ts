@@ -1,5 +1,18 @@
 import { S3UrlParts } from '../entry/textract';
 
+export function formatDate(date: Date): string {
+    const month = ('0' + (date.getMonth() + 1)).slice(-2); // Months are zero-based
+    const day = ('0' + date.getDate()).slice(-2);
+    const year = date.getFullYear();
+    return `${month}/${day}/${year}`;
+}
+
+export function getPreviousDate() {
+    const now = new Date();
+    now.setDate(now.getDate() - 1);
+    return now;
+}
+
 export function extractCardValue(s3Url: string): string {
     const regex = /card_(\d+)\.\w+$/;
     const match = s3Url.match(regex);
