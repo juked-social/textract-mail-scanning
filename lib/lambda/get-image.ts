@@ -5,16 +5,43 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const s3Client = new S3Client({ region: process.env.REGION });
 
-export const handler: APIGatewayProxyHandler = async (event: any) => {
+export const handler: APIGatewayProxyHandler = async (event) => {
+    if (!event?.body) {
+        return {
+            statusCode: 400,
+            body: JSON.stringify({ message: 'Request body is missing' })
+        };
+    }
+
+    // Parse the body and handle potential errors
     const body = typeof event.body === 'string' ? JSON.parse(event.body || '{}') : event.body;
 
     const { imagePath } = body;
-    const { bucket, key } = splitS3Url(imagePath);
 
     if (!imagePath) {
         return {
             statusCode: 400,
-            body: JSON.stringify({ message: 'imagePath is required' }),
+            body: JSON.stringify({ message: 'imagePath is required' })
+        };
+    }
+
+    let bucket = '', key = '';
+
+    try {
+        const result = splitS3Url(imagePath);
+        bucket = result.bucket;
+        key = result.key;
+    } catch (error) {
+        return {
+            statusCode: 400,
+            body: JSON.stringify({ message: error || 'Invalid S3 URL' }),
+        };
+    }
+
+    if(!bucket || !key){
+        return {
+            statusCode: 400,
+            body: JSON.stringify({ message: 'No necessary params' })
         };
     }
 
