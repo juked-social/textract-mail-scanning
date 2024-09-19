@@ -2,9 +2,7 @@ import puppeteer from 'puppeteer';
 import chromium from '@sparticuz/chromium';
 import { shredAnytimeMails } from './handler/puppeteer-service';
 import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
-import { getSecret } from './handler/secret-manager';
 
-const SECRET_ARN = process.env.SECRET_ARN || '';
 const CHUNK_SIZE = 20; // Define the chunk size based on your requirements
 
 // Function to split an array into chunks
@@ -17,8 +15,12 @@ const chunkArray = (array: string[], chunkSize: number): string[][] => {
 };
 
 export const handler = async (event: any) => {
-    const secret = await getSecret(SECRET_ARN);
-    const anytimeAspNetSessionId = secret?.anytimeAspNetSessionId || '';
+    const body = typeof event.InputParameters.body === 'string' ? JSON.parse(event.InputParameters.body || '{}') : event.InputParameters.body;
+    const { anytimeAspNetSessionId } = body;
+
+    if (!anytimeAspNetSessionId) {
+        throw new Error('Missing required parameters');
+    }
 
     const idsArray = typeof event.Payload === 'string' ? JSON.parse(event.Payload || '[]') : event.Payload;
 
@@ -39,7 +41,6 @@ export const handler = async (event: any) => {
             value: anytimeAspNetSessionId,
             domain: 'packmail.anytimemailbox.com',
         });
-
         const cookies = {
             'ASP.NET_SessionId': anytimeAspNetSessionId
         };
