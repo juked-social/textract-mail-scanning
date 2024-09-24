@@ -7,21 +7,22 @@ Welcome to Mail Processing project! This project uses the AWS Cloud Development 
 This repository contains an AWS CDK application written in TypeScript that automates the deployment of AWS resources. The application is configured through the `cdk.json` file, which guides the CDK Toolkit in executing the app.
 
 If any credentials need to be updated, please update them in AWS Secrets Manager.
-### Secrets Manager for Tokens Management:
-The tokens for Anytime Mailbox and the API are stored in AWS Secrets Manager, which allows for easy management.
+### Secrets Manager for Token Management:
+The tokens for Anytime Mailbox and the API are securely stored in AWS Secrets Manager, enabling easy management.
 
-To update the tokens, navigate to AWS Secrets Manager:
+To update the tokens, follow these steps:
+- Navigate to AWS Secrets Manager.
 - Go to Secrets.
 - Select the secret named mail-textract-secret.
-- Click on Retrieve secret value.
+- Click Retrieve secret value.
 - Select Edit to update the tokens as needed.
 
  #### AWS Secrets Manager Variables:
- - apiToken2Capture: API token for 2Captcha
- - anytimeMailUser: Anytime Mail user
- - anytimeMailPassword: Anytime Mail password
- - anytimeMailSiteKey: Anytime Mail SiteKey for reCAPTCHA v2
- - apiToken: API token for authentication
+ - apiToken2Capture: API token for 2Captcha.
+ - anytimeMailUser: Username for Anytime Mailbox.
+ - anytimeMailPassword: Password for Anytime Mailbox.
+ - anytimeMailSiteKey: SiteKey for Anytime Mailbox reCAPTCHA v2.
+ - apiToken: API token for authentication.
 
 
 ## Getting Started
