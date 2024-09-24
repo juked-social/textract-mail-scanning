@@ -41,7 +41,7 @@ export class MailProcessingStack extends cdk.Stack {
         const secret = new secretsmanager.Secret(this, 'MailTextractSecret', {
             secretName: 'mail-textract-secret', // The name of the secret
             secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({
-                apiToken: '6519|SZxtqwItf2hJRiGoOO2s09AQPEmq8XbUQ5CAIi3S', // API token for authentication
+                apiToken: '1085503|Ayp8V5GvuGgD9oj4v40AvGUE9LjpARlBatuLIC9z', // API token for authentication
                 apiToken2Capture: 'b4f22af45ef2998917dd348aff47bc76', // API token for 2Captcha
                 anytimeMailUser: 'aaandre94@gmail.com', // AnytimeMail user
                 anytimeMailPassword: 'XZR-qnb1rvu2bdc1zhj', // AnytimeMail password
@@ -133,7 +133,7 @@ export class MailProcessingStack extends cdk.Stack {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
                 SECRET_ARN: secret.secretArn,
-                API_URL: 'https://api.goldsink.com',
+                API_URL: 'https://api.chanced.com',
             },
             memorySize: 1024, // Set memory size to 1024 MB
             timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
