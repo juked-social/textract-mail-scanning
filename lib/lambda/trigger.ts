@@ -102,7 +102,7 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         console.error('Error starting Step Function execution', error);
         return {
             statusCode: 500,
-            body: JSON.stringify({ message: 'Failed to trigger Step Function', error }),
+            body: JSON.stringify({ message: 'Error starting Step Function execution', error: error }),
         };
     }
 };
