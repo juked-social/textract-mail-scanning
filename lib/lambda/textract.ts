@@ -46,7 +46,7 @@ function isValid(mail: BedrockResponse): isValidReason {
         };
     }
 
-    if (!mail.code) {
+    if (!mail.code || mail.code?.length >= 20) {
         return {
             is_valid: false,
             reason: 'Invalid code'
@@ -60,7 +60,7 @@ function isValid(mail: BedrockResponse): isValidReason {
         };
     }
 
-    if (!mail.email) {
+    if (!mail.email || mail.email?.length >= 255) {
         return {
             is_valid: false,
             reason: 'Invalid email'
@@ -188,9 +188,9 @@ export const handler = async (event: TextractInterface) => {
         const textractResponseJson = JSON.parse(textractResponse);
 
         const text = textractResponseJson?.Blocks
-            ?.filter((block: Block) => block.BlockType === 'LINE')
-            ?.map((block: Block) => block.Text || '')
-            .join('\n')
+                ?.filter((block: Block) => block.BlockType === 'LINE')
+                ?.map((block: Block) => block.Text || '')
+                .join('\n')
             || '';
 
         let extractedInfo = await invokeBedrockModel(bedrockClient, text);
