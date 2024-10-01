@@ -46,7 +46,7 @@ function isValid(mail: BedrockResponse): isValidReason {
         };
     }
 
-    if (!mail.code) {
+    if (!mail.code || mail.code?.length >= 20) {
         return {
             is_valid: false,
             reason: 'Invalid code'
@@ -60,7 +60,7 @@ function isValid(mail: BedrockResponse): isValidReason {
         };
     }
 
-    if (!mail.email) {
+    if (!mail.email || mail.email?.length >= 255) {
         return {
             is_valid: false,
             reason: 'Invalid email'
