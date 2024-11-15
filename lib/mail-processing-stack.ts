@@ -9,7 +9,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { Code, Runtime, Function, Architecture } from 'aws-cdk-lib/aws-lambda';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import {
     StateMachine,
@@ -277,8 +277,8 @@ export class MailProcessingStack extends cdk.Stack {
         const afterTextractTask = new LambdaInvoke(this, 'TextractTask', {
             lambdaFunction: textractLambda,
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', 
-                'Payload.$': '$' 
+                'InputParameters.$': '$$.Execution.Input',
+                'Payload.$': '$'
             }),
             outputPath: '$.Payload',
         });
@@ -286,8 +286,8 @@ export class MailProcessingStack extends cdk.Stack {
         const afterTextractRotateTask = new LambdaInvoke(this, 'TextractRotateTask', {
             lambdaFunction: textractLambda,
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', 
-                'Payload.$': '$' 
+                'InputParameters.$': '$$.Execution.Input',
+                'Payload.$': '$'
             }),
             outputPath: '$.Payload',
         });
@@ -296,8 +296,8 @@ export class MailProcessingStack extends cdk.Stack {
             lambdaFunction: completionLambda,
             outputPath: '$.Payload',
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', 
-                'Payload.$': '$' 
+                'InputParameters.$': '$$.Execution.Input',
+                'Payload.$': '$'
             }),
         });
 
@@ -305,8 +305,8 @@ export class MailProcessingStack extends cdk.Stack {
             lambdaFunction: callApiLambda,
             outputPath: '$.Payload',
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', 
-                'Payload.$': '$' 
+                'InputParameters.$': '$$.Execution.Input',
+                'Payload.$': '$'
             }),
         });
 
@@ -385,6 +385,49 @@ export class MailProcessingStack extends cdk.Stack {
             timeout: cdk.Duration.hours(24),
         });
 
+        // Create a VPC with public and private subnets
+        const vpc = new ec2.Vpc(this, 'LambdaVpc', {
+            cidr: '10.0.0.0/16',
+            maxAzs: 2,
+            subnetConfiguration: [
+                {
+                    name: 'PublicSubnet',
+                    subnetType: ec2.SubnetType.PUBLIC,
+                    cidrMask: 24,
+                },
+                {
+                    name: 'PrivateSubnet',
+                    subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+                    cidrMask: 24,
+                },
+            ],
+        });
+
+        // Create Elastic IPs for NAT Gateways
+        const eip1 = new ec2.CfnEIP(this, 'NatEip1');
+        const eip2 = new ec2.CfnEIP(this, 'NatEip2');
+
+        // Add NAT Gateways to the public subnets
+        const natGateway1 = new ec2.CfnNatGateway(this, 'NatGateway1', {
+            subnetId: vpc.publicSubnets[0].subnetId,
+            allocationId: eip1.attrAllocationId,
+        });
+
+        const natGateway2 = new ec2.CfnNatGateway(this, 'NatGateway2', {
+            subnetId: vpc.publicSubnets[1].subnetId,
+            allocationId: eip2.attrAllocationId,
+        });
+
+        // Update route tables for private subnets to route traffic through NAT Gateways
+        vpc.privateSubnets.forEach((subnet, index) => {
+            const routeTable = new ec2.CfnRoute(this, `PrivateRoute${index + 1}`, {
+                routeTableId: subnet.routeTable.routeTableId,
+                destinationCidrBlock: '0.0.0.0/0',
+                natGatewayId: index === 0 ? natGateway1.ref : natGateway2.ref,
+            });
+        });
+
+
         // Define the Trigger Lambda function
         const triggerLambda = new NodejsFunction(this, 'TriggerLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
@@ -394,7 +437,10 @@ export class MailProcessingStack extends cdk.Stack {
             timeout: cdk.Duration.minutes(15), // Set timeout to 15 minutes
             architecture: lambda.Architecture.X86_64,
             maxEventAge: cdk.Duration.minutes(15),
+            vpc,
+            vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
             environment: {
+                STATIC_IP_TEST: 'true',
                 STATE_MACHINE_ARN: stateMachine.stateMachineArn,
                 REGION: this.region,
                 SECRET_ARN: secret.secretArn
@@ -407,6 +453,10 @@ export class MailProcessingStack extends cdk.Stack {
         stateMachine.grantStartExecution(triggerLambda);
 
         // Attach a policy to the Lambda execution role
+        triggerLambda.addToRolePolicy(new PolicyStatement({
+            actions: ['ec2:DescribeNetworkInterfaces', 'ec2:CreateNetworkInterface', 'ec2:DeleteNetworkInterface'],
+            resources: ['*'],
+        }));
         triggerLambda.addToRolePolicy(new PolicyStatement({
             actions: ['secretsmanager:GetSecretValue'],
             resources: [secret.secretArn],
@@ -444,5 +494,9 @@ export class MailProcessingStack extends cdk.Stack {
                 })
             })],
         });
+        // Output the VPC ID and Elastic IPs
+        new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
+        new cdk.CfnOutput(this, 'NatEip1', { value: eip1.ref });
+        new cdk.CfnOutput(this, 'NatEip2', { value: eip2.ref });
     }
 }
