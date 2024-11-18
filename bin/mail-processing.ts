@@ -7,7 +7,7 @@ import { MailProcessingStack } from '../lib/mail-processing-stack';
 const app = new cdk.App();
 new MailProcessingStack(app, 'MailProcessingStack', {
     env: {
-        account: '911167884854',
+        account: process.env.CDK_DEFAULT_ACCOUNT,
         region: 'us-east-1'
     }
 });
