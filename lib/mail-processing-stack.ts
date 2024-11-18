@@ -54,47 +54,51 @@ export class MailProcessingStack extends cdk.Stack {
         const natEip2 = 'eipalloc-02fbe291d19c94160';
 
         // Create VPC
-        const vpc = new ec2.Vpc(this, 'MyVpc', {
-            ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
-            maxAzs: 3,
-            subnetConfiguration: [
-                {
-                    cidrMask: 24,
-                    name: 'PublicSubnet',
-                    subnetType: ec2.SubnetType.PUBLIC,
-                },
-                {
-                    cidrMask: 24,
-                    name: 'PrivateSubnet',
-                    subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-                },
-            ],
-        });
-
-        // NAT Gateways with provided Elastic IPs
-        const natGateway1 = new ec2.CfnNatGateway(this, 'NatGateway1', {
-            subnetId: vpc.publicSubnets[0].subnetId,
-            allocationId: natEip1,
-        });
-
-        const natGateway2 = new ec2.CfnNatGateway(this, 'NatGateway2', {
-            subnetId: vpc.publicSubnets[1].subnetId,
-            allocationId: natEip2,
-        });
-
-        // Public Routes: Skip creation for existing routes
-        vpc.publicSubnets.forEach((subnet, index) => {
-            console.log(`Skipping route creation for public subnet: ${subnet.subnetId}`);
-        });
-
-        // Private Routes: Update route table with NAT Gateways
-        vpc.privateSubnets.forEach((subnet, index) => {
-            new ec2.CfnRoute(this, `PrivateRoute${index + 1}`, {
-                routeTableId: privateRouteTableId,
-                destinationCidrBlock: '0.0.0.0/0',
-                natGatewayId: index === 0 ? natGateway1.ref : natGateway2.ref,
-            });
-        });
+        // const vpc = new ec2.Vpc(this, 'MyVpc', {
+        //     ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
+        //     maxAzs: 3,
+        //     subnetConfiguration: [
+        //         {
+        //             cidrMask: 24,
+        //             name: 'PublicSubnet',
+        //             subnetType: ec2.SubnetType.PUBLIC,
+        //         },
+        //         {
+        //             cidrMask: 24,
+        //             name: 'PrivateSubnet',
+        //             subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+        //         },
+        //     ],
+        // });
+        //
+        // // NAT Gateways with provided Elastic IPs
+        // const natGateway1 = new ec2.CfnNatGateway(this, 'NatGateway1', {
+        //     subnetId: vpc.publicSubnets[0].subnetId,
+        //     allocationId: natEip1,
+        // });
+        //
+        // const natGateway2 = new ec2.CfnNatGateway(this, 'NatGateway2', {
+        //     subnetId: vpc.publicSubnets[1].subnetId,
+        //     allocationId: natEip2,
+        // });
+        //
+        // // Public Routes: Skip creation for existing routes
+        // vpc.publicSubnets.forEach((subnet, index) => {
+        //     console.log(`Skipping route creation for public subnet: ${subnet.subnetId}`);
+        // });
+        //
+        // // Private Routes: Update route table with NAT Gateways
+        // vpc.privateSubnets.forEach((subnet, index) => {
+        //     new ec2.CfnRoute(this, `PrivateRoute${index + 1}`, {
+        //         routeTableId: privateRouteTableId,
+        //         destinationCidrBlock: '0.0.0.0/0',
+        //         natGatewayId: index === 0 ? natGateway1.ref : natGateway2.ref,
+        //     });
+        // });
+        const vpc = new ec2.Vpc(this, 'NoNatVPC', {
+            natGateways: 0
+        })
+        const lambda_sg = new ec2.SecurityGroup(this, 'SecurityGroup', {vpc})
 
         // Lambda function for Trigger
         const triggerLambda = new NodejsFunction(this, 'TriggerLambda', {
@@ -106,7 +110,10 @@ export class MailProcessingStack extends cdk.Stack {
             architecture: lambda.Architecture.X86_64,
             maxEventAge: cdk.Duration.minutes(15),
             vpc,
-            vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+            vpcSubnets: {subnets: vpc.publicSubnets},
+            securityGroups: [lambda_sg],
+            allowPublicSubnet: true,
+            // vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
             environment: {
                 REGION: this.region,
                 STATIC_IP_TEST: 'true',
@@ -116,6 +123,41 @@ export class MailProcessingStack extends cdk.Stack {
 
         // Grant permissions
         secret.grantRead(triggerLambda);
+        vpc.publicSubnets.map((subnet) => {
+                const cr = new cdk.custom_resources.AwsCustomResource(subnet, "customResource", {
+                    onUpdate: {
+                        physicalResourceId: cdk.custom_resources.PhysicalResourceId.of(
+                            `${lambda_sg.securityGroupId}-${subnet.subnetId}-CustomResource`
+                        ),
+                        service: "EC2",
+                        action: "describeNetworkInterfaces",
+                        parameters: {
+                            Filters: [
+                                { Name: "interface-type", Values: ["lambda"] },
+                                { Name: "group-id", Values: [lambda_sg.securityGroupId] },
+                                { Name: "subnet-id", Values: [subnet.subnetId] },
+                            ],
+                        },
+                    },
+                    policy: cdk.custom_resources.AwsCustomResourcePolicy.fromSdkCalls({
+                        resources: cdk.custom_resources.AwsCustomResourcePolicy.ANY_RESOURCE
+                    }),
+                }
+                );
+                cr.node.addDependency(triggerLambda);
+                const eip = new ec2.CfnEIP(subnet, "EIP", { domain: "vpc" });
+                new ec2.CfnEIPAssociation(subnet, "EIPAssociation", {
+                    networkInterfaceId: cr.getResponseField(
+                        "NetworkInterfaces.0.NetworkInterfaceId"
+                    ),
+                    allocationId: eip.attrAllocationId,
+                });
+                new cdk.CfnOutput(subnet, "ElasticIP", {
+                    value: eip.attrPublicIp,
+                });
+        });
+
+
 
         // Create API Gateway
         const api = new apigateway.RestApi(this, 'MailProcessingApi', {
@@ -129,7 +171,7 @@ export class MailProcessingStack extends cdk.Stack {
 
         // Outputs
         new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
-        new cdk.CfnOutput(this, 'NatEip1Output', { value: natGateway1.ref });
-        new cdk.CfnOutput(this, 'NatEip2Output', { value: natGateway2.ref });
+        // new cdk.CfnOutput(this, 'NatEip1Output', { value: natGateway1.ref });
+        // new cdk.CfnOutput(this, 'NatEip2Output', { value: natGateway2.ref });
     }
 }
