@@ -28,7 +28,7 @@ const typescriptRecommended = {
         '@typescript-eslint/no-unused-vars': ['warn', { 'args': 'none' }],
         '@typescript-eslint/no-inferrable-types': 'warn',
         '@typescript-eslint/no-explicit-any': 'warn',
-        '@typescript-eslint/no-empty-function': 'warn',
+        '@typescript-eslint/no-empty-function': 'off',
         '@typescript-eslint/no-var-requires': 'warn',
         '@typescript-eslint/ban-ts-comment': 'warn',
         // Add other TypeScript recommended rules here if needed

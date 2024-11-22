@@ -4,18 +4,17 @@ import { addDays, isBefore, isValid, parse } from 'date-fns';
 import { formatDate, getPreviousDate } from './handler/utils';
 import { getSecret } from './handler/secret-manager';
 import { getAnytimeMailCookies } from './handler/recapture-2capture';
+import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 
 const stateMachineArn = process.env.STATE_MACHINE_ARN!;
 const sfnClient = new SFNClient({ region: process.env.REGION });
 const SECRET_ARN = process.env.SECRET_ARN || '';
+const TOPIC_ARN = process.env.TOPIC_ARN || '';
+const REGION = process.env.REGION || '';
 
 export const handler: APIGatewayProxyHandler = async (event) => {
     if (!event?.body) {
-        console.error('Request body is missing');
-        return {
-            statusCode: 400,
-            body: JSON.stringify({ message: 'Request body is missing' })
-        };
+        throw new Error('Request body is missing');  
     }
 
     try {
@@ -39,21 +38,13 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         );
 
         if (!cookies) {
-            console.error('Failed to get AnytimeMail Cookies');
-            return {
-                statusCode: 400,
-                body: JSON.stringify({ message: 'Failed to get AnytimeMail Cookies' }),
-            };
+            throw new Error('Failed to get AnytimeMail Cookies');
         }
 
         const sessionIdCookie = cookies.find(cookie => cookie.name === 'ASP.NET_SessionId');
 
         if(!sessionIdCookie?.value){
-            console.error('Failed to get AnytimeMail Cookies ASP.NET_SessionId');
-            return {
-                statusCode: 400,
-                body: JSON.stringify({ message: 'Failed to get AnytimeMail Cookies ASP.NET_SessionId' }),
-            };
+            throw new Error('Failed to get AnytimeMail Cookies ASP.NET_SessionId');
         }
 
         if (isValid(startDate) && isValid(endDate)) {
@@ -87,11 +78,8 @@ export const handler: APIGatewayProxyHandler = async (event) => {
                 currentDate = addDays(currentDate, 1);
             }
         } else {
-            console.error('Invalid dates provided');
-            return {
-                statusCode: 400,
-                body: JSON.stringify({ message: 'Invalid dates provided' }),
-            };
+            // await errorHandler.throwError('Invalid dates provided', 400);
+            throw new Error('Invalid dates provided');
         }
 
         return {
@@ -99,10 +87,21 @@ export const handler: APIGatewayProxyHandler = async (event) => {
             body: JSON.stringify({ message: 'Step Function triggered successfully for each day' }),
         };
     } catch (error) {
-        console.error('Error starting Step Function execution', error);
+        console.error(error);
+        const snsClient = new SNSClient({ region: REGION });
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        await snsClient.send(new PublishCommand({
+            TopicArn: TOPIC_ARN,
+            Message: JSON.stringify({
+                message: errorMessage,
+                statusCode: 500,
+                timestamp: new Date().toISOString()
+            }),
+            Subject: 'Application error'
+        }));
         return {
             statusCode: 500,
-            body: JSON.stringify({ message: 'Error starting Step Function execution', error: error }),
+            body: JSON.stringify({ message: errorMessage })
         };
     }
 };

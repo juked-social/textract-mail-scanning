@@ -9,6 +9,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { Code, Runtime, Function, Architecture } from 'aws-cdk-lib/aws-lambda';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { Topic } from 'aws-cdk-lib/aws-sns';
 
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import {
@@ -36,6 +37,9 @@ export class MailProcessingStack extends cdk.Stack {
         super(scope, id, props);
 
         const S3_TEMP_OUTPUT_PREFIX = 'mail-textract-temp-output';
+
+        const textractMailerTopic = new Topic(this, 'textract-mailer-topic');
+
 
         // Create a Secrets Manager secret to store sensitive information
         const secret = new secretsmanager.Secret(this, 'MailTextractSecret', {
@@ -397,7 +401,8 @@ export class MailProcessingStack extends cdk.Stack {
             environment: {
                 STATE_MACHINE_ARN: stateMachine.stateMachineArn,
                 REGION: this.region,
-                SECRET_ARN: secret.secretArn
+                SECRET_ARN: secret.secretArn,
+                TOPIC_ARN: textractMailerTopic.topicArn
             },
             bundling: {
                 externalModules: ['aws-sdk', '@sparticuz/chromium'] // Add any external modules here
@@ -417,6 +422,10 @@ export class MailProcessingStack extends cdk.Stack {
         }));
         stateMachine.addToRolePolicy(new PolicyStatement({
             actions: ['states:StartExecution'],
+            resources: ['*'],
+        }));
+        stateMachine.addToRolePolicy(new PolicyStatement({
+            actions: ['sns:*'],
             resources: ['*'],
         }));
 
