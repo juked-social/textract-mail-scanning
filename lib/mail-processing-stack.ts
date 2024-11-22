@@ -1,35 +1,29 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
-import * as events from 'aws-cdk-lib/aws-events';
-import * as path from 'path';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
-import * as targets from 'aws-cdk-lib/aws-events-targets';
-import { Bucket } from 'aws-cdk-lib/aws-s3';
-import { Code, Runtime, Function, Architecture } from 'aws-cdk-lib/aws-lambda';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-
-import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
-import {
-    StateMachine,
-    Map,
-    DefinitionBody,
-    Choice,
-    Condition,
-    Chain,
-    Wait,
-    WaitTime,
-    IntegrationPattern,
-    TaskInput,
-    JsonPath,
-    Pass,
-    ProcessorType,
-    ProcessorMode,
-} from 'aws-cdk-lib/aws-stepfunctions';
+import { Bucket } from 'aws-cdk-lib/aws-s3';
+import path from 'path';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
-import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { TextractGenericAsyncSfnTask, TextractPOCDecider } from 'amazon-textract-idp-cdk-constructs';
+import {
+    Chain,
+    Choice,
+    Condition, DefinitionBody,
+    IntegrationPattern,
+    JsonPath,
+    Map,
+    Pass, ProcessorMode, ProcessorType, StateMachine,
+    TaskInput, Wait, WaitTime
+} from 'aws-cdk-lib/aws-stepfunctions';
+import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import { Architecture, Code, Function, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 
 export class MailProcessingStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -42,7 +36,7 @@ export class MailProcessingStack extends cdk.Stack {
             secretName: 'mail-textract-secret', // The name of the secret
             secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({
                 apiToken: '1085503|Ayp8V5GvuGgD9oj4v40AvGUE9LjpARlBatuLIC9z', // API token for authentication
-                apiToken2Capture: 'b4f22af45ef2998917dd348aff47bc76', // API token for 2Captcha
+                apiToken2Capture: '95c33c5ee78a7e2df987a022fbc34a1d', // API token for 2Captcha
                 anytimeMailUser: 'aaandre94@gmail.com', // AnytimeMail user
                 anytimeMailPassword: 'XZR-qnb1rvu2bdc1zhj', // AnytimeMail password
                 anytimeMailSiteKey: '6LcYxHEUAAAAAPnZvF9fus2A095V1i2m3rguU3j7' // AnytimeMail SiteKey for reCapture v2
@@ -277,8 +271,8 @@ export class MailProcessingStack extends cdk.Stack {
         const afterTextractTask = new LambdaInvoke(this, 'TextractTask', {
             lambdaFunction: textractLambda,
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', 
-                'Payload.$': '$' 
+                'InputParameters.$': '$$.Execution.Input',
+                'Payload.$': '$'
             }),
             outputPath: '$.Payload',
         });
@@ -286,8 +280,8 @@ export class MailProcessingStack extends cdk.Stack {
         const afterTextractRotateTask = new LambdaInvoke(this, 'TextractRotateTask', {
             lambdaFunction: textractLambda,
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', 
-                'Payload.$': '$' 
+                'InputParameters.$': '$$.Execution.Input',
+                'Payload.$': '$'
             }),
             outputPath: '$.Payload',
         });
@@ -385,7 +379,12 @@ export class MailProcessingStack extends cdk.Stack {
             timeout: cdk.Duration.hours(24),
         });
 
-        // Define the Trigger Lambda function
+        const vpc = new ec2.Vpc(this, 'NoNatVPC', {
+            natGateways: 0
+        });
+        const lambda_sg = new ec2.SecurityGroup(this, 'SecurityGroup', { vpc });
+
+        // Lambda function for Trigger
         const triggerLambda = new NodejsFunction(this, 'TriggerLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'trigger.ts'),
@@ -394,9 +393,15 @@ export class MailProcessingStack extends cdk.Stack {
             timeout: cdk.Duration.minutes(15), // Set timeout to 15 minutes
             architecture: lambda.Architecture.X86_64,
             maxEventAge: cdk.Duration.minutes(15),
+            vpc,
+            vpcSubnets: { subnets: vpc.publicSubnets },
+            securityGroups: [lambda_sg],
+            allowPublicSubnet: true,
+            // vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
             environment: {
                 STATE_MACHINE_ARN: stateMachine.stateMachineArn,
                 REGION: this.region,
+                STATIC_IP_TEST: 'true',
                 SECRET_ARN: secret.secretArn
             },
             bundling: {
@@ -404,8 +409,9 @@ export class MailProcessingStack extends cdk.Stack {
             },
         });
 
+        // Grant permissions
         stateMachine.grantStartExecution(triggerLambda);
-
+        secret.grantRead(triggerLambda);
         // Attach a policy to the Lambda execution role
         triggerLambda.addToRolePolicy(new PolicyStatement({
             actions: ['secretsmanager:GetSecretValue'],
@@ -419,7 +425,42 @@ export class MailProcessingStack extends cdk.Stack {
             actions: ['states:StartExecution'],
             resources: ['*'],
         }));
+        
+        vpc.publicSubnets.map((subnet) => {
+            const cr = new cdk.custom_resources.AwsCustomResource(subnet, 'customResource', {
+                onUpdate: {
+                    physicalResourceId: cdk.custom_resources.PhysicalResourceId.of(
+                        `${lambda_sg.securityGroupId}-${subnet.subnetId}-CustomResource`
+                    ),
+                    service: 'EC2',
+                    action: 'describeNetworkInterfaces',
+                    parameters: {
+                        Filters: [
+                            { Name: 'interface-type', Values: ['lambda'] },
+                            { Name: 'group-id', Values: [lambda_sg.securityGroupId] },
+                            { Name: 'subnet-id', Values: [subnet.subnetId] },
+                        ],
+                    },
+                },
+                policy: cdk.custom_resources.AwsCustomResourcePolicy.fromSdkCalls({
+                    resources: cdk.custom_resources.AwsCustomResourcePolicy.ANY_RESOURCE
+                }),
+            }
+            );
+            cr.node.addDependency(triggerLambda);
+            const eip = new ec2.CfnEIP(subnet, 'EIP', { domain: 'vpc' });
+            new ec2.CfnEIPAssociation(subnet, 'EIPAssociation', {
+                networkInterfaceId: cr.getResponseField(
+                    'NetworkInterfaces.0.NetworkInterfaceId'
+                ),
+                allocationId: eip.attrAllocationId,
+            });
+            new cdk.CfnOutput(subnet, 'ElasticIP', {
+                value: eip.attrPublicIp,
+            });
+        });
 
+        // Create API Gateway
         const api = new apigateway.RestApi(this, 'MailProcessingApi', {
             restApiName: 'Mail Processing Service',
             description: 'This service automates the process of downloading, processing, validating, and uploading mail data from Anytime Mailbox',
@@ -444,5 +485,8 @@ export class MailProcessingStack extends cdk.Stack {
                 })
             })],
         });
+
+        // Outputs
+        new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
     }
 }
