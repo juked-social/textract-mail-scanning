@@ -2,6 +2,7 @@ import { splitS3Url } from './handler/utils';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Readable } from 'node:stream';
 import sharp from 'sharp';
+import { publishError } from './helpers';
 
 const s3Client = new S3Client({ region: process.env.REGION });
 
@@ -33,6 +34,9 @@ export const handler = async (event: any) => {
     const { s3Path } = event;
 
     try {
+        if (!s3Path) {
+            throw new Error('Missing required s3Path parameter');
+        }
         const { bucket, key } = splitS3Url(s3Path);
 
         // Get image from S3
@@ -62,8 +66,9 @@ export const handler = async (event: any) => {
         await s3Client.send(s3ImagePut);
 
     } catch (error) {
-        console.error('Error during processing:', error);
-        throw new Error('Error during processing: ' + error);
+        console.error('Error during image processing:', error);
+        await publishError('ImageRotator', error);
+        throw error;
     }
     return { s3Path };
 };

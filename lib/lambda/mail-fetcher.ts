@@ -1,6 +1,7 @@
 import puppeteer from 'puppeteer';
 import chromium from '@sparticuz/chromium';
 import { downloadImages, getAnytimeMailPageInfo } from './handler/puppeteer-service';
+import { publishError } from './helpers';
 
 interface EventBody {
     startDate: string;
@@ -64,7 +65,8 @@ export const handler = async (event: LambdaEvent) => {
         };
     } catch (error) {
         console.error('Error during processing:', error);
-        throw new Error('Error during processing: ' + error);
+        await publishError('MailFetcher', error);
+        throw error;
     } finally {
         await browser.close();
     }

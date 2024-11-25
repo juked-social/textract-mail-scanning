@@ -24,12 +24,20 @@ import {
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { Architecture, Code, Function, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { Topic } from 'aws-cdk-lib/aws-sns';
 
 export class MailProcessingStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
         const S3_TEMP_OUTPUT_PREFIX = 'mail-textract-temp-output';
+
+        const textractMailerTopic = new Topic(this, 'textract-mailer-topic');
+
+        const commonLambdaEnvironment = {
+            REGION: this.region,
+            TOPIC_ARN: textractMailerTopic.topicArn,
+        };
 
         // Create a Secrets Manager secret to store sensitive information
         const secret = new secretsmanager.Secret(this, 'MailTextractSecret', {
@@ -78,7 +86,6 @@ export class MailProcessingStack extends cdk.Stack {
             compatibleRuntimes: [lambda.Runtime.NODEJS_18_X],
         });
 
-
         // Define the Lambda function
         const mailFetchingLambda = new NodejsFunction(this, 'MailFetcherLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
@@ -88,6 +95,7 @@ export class MailProcessingStack extends cdk.Stack {
             timeout: cdk.Duration.minutes(15), // Set timeout to 15 minutes
             architecture: lambda.Architecture.X86_64,
             environment: {
+                ...commonLambdaEnvironment,
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
@@ -103,6 +111,7 @@ export class MailProcessingStack extends cdk.Stack {
             memorySize: 512, // Set memory size to 1024 MB
             timeout: cdk.Duration.minutes(5), // Set timeout to 10 minutes
             environment: {
+                ...commonLambdaEnvironment,
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
@@ -115,6 +124,7 @@ export class MailProcessingStack extends cdk.Stack {
             memorySize: 512, // Set memory size to 1024 MB
             timeout: cdk.Duration.minutes(5), // Set timeout to 10 minutes
             environment: {
+                ...commonLambdaEnvironment,
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 REGION: this.region,
             },
@@ -124,6 +134,7 @@ export class MailProcessingStack extends cdk.Stack {
             runtime: lambda.Runtime.NODEJS_18_X,
             entry: path.join(__dirname, 'lambda', 'call-api.ts'),
             environment: {
+                ...commonLambdaEnvironment,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
                 SECRET_ARN: secret.secretArn,
@@ -140,6 +151,7 @@ export class MailProcessingStack extends cdk.Stack {
             memorySize: 1024, // Set memory size to 1024 MB
             timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
             environment: {
+                ...commonLambdaEnvironment,
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
@@ -156,6 +168,7 @@ export class MailProcessingStack extends cdk.Stack {
             layers: [layerFastLevenshtein],
             memorySize: 1024, // Set memory size to 1024 MB
             environment: {
+                ...commonLambdaEnvironment,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
                 BEDROCK_MODEL_ID: 'anthropic.claude-3-haiku-20240307-v1:0',
@@ -210,6 +223,7 @@ export class MailProcessingStack extends cdk.Stack {
             timeout: cdk.Duration.minutes(10), // Set timeout to 10 minutes
             architecture: lambda.Architecture.X86_64,
             environment: {
+                ...commonLambdaEnvironment,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 REGION: this.region,
@@ -290,8 +304,8 @@ export class MailProcessingStack extends cdk.Stack {
             lambdaFunction: completionLambda,
             outputPath: '$.Payload',
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', 
-                'Payload.$': '$' 
+                'InputParameters.$': '$$.Execution.Input',
+                'Payload.$': '$'
             }),
         });
 
@@ -299,8 +313,8 @@ export class MailProcessingStack extends cdk.Stack {
             lambdaFunction: callApiLambda,
             outputPath: '$.Payload',
             payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input', 
-                'Payload.$': '$' 
+                'InputParameters.$': '$$.Execution.Input',
+                'Payload.$': '$'
             }),
         });
 
@@ -399,6 +413,7 @@ export class MailProcessingStack extends cdk.Stack {
             allowPublicSubnet: true,
             // vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
             environment: {
+                ...commonLambdaEnvironment,
                 STATE_MACHINE_ARN: stateMachine.stateMachineArn,
                 REGION: this.region,
                 STATIC_IP_TEST: 'true',
@@ -425,7 +440,7 @@ export class MailProcessingStack extends cdk.Stack {
             actions: ['states:StartExecution'],
             resources: ['*'],
         }));
-        
+
         vpc.publicSubnets.map((subnet) => {
             const cr = new cdk.custom_resources.AwsCustomResource(subnet, 'customResource', {
                 onUpdate: {
@@ -467,6 +482,23 @@ export class MailProcessingStack extends cdk.Stack {
             deployOptions: {
                 stageName: 'dev',
             },
+        });
+
+        const snsPublishPolicy = new PolicyStatement({
+            actions: ['sns:*'],
+            resources: ['*'],
+        });
+        [
+            mailFetchingLambda,
+            s3ProcessingLambda,
+            getImageLambda,
+            rotateImageLambda,
+            textractLambda,
+            callApiLambda,
+            completionLambda,
+            triggerLambda,
+        ].forEach(lambda => {
+            lambda.addToRolePolicy(snsPublishPolicy);
         });
 
         // Create a resource and method for the API

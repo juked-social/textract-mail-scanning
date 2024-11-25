@@ -12,6 +12,7 @@ import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-servic
 import { Mail } from './entry/mail';
 import * as levenshtein from 'fast-levenshtein';
 import { cleanTextFromS3 } from './handler/temp-service';
+import { publishError } from './helpers';
 
 const bedrockClient = new BedrockRuntimeClient({ region: process.env.REGION });
 
@@ -144,7 +145,7 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         // If no match is found, try appending a closing brace if needed
         if (!extractedInformation.match(/\{[\s\S]*}/)) {
             console.error('Error parsing corrected JSON');
-            return null;
+            throw new Error('Error parsing corrected JSON');
         }
 
         console.log('extractedInformation', extractedInformation);
@@ -152,9 +153,8 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         return JSON.parse(extractedInformation || '{}');
     } catch (error) {
         console.log(`Error invoking Bedrock model: ${error}`);
+        throw new Error(`Bedrock model invocation failed: ${error}`);
     }
-
-    return null;
 }
 
 async function readTextFromS3(bucket: string, key: string): Promise<string> {
@@ -188,9 +188,9 @@ export const handler = async (event: TextractInterface) => {
         const textractResponseJson = JSON.parse(textractResponse);
 
         const text = textractResponseJson?.Blocks
-                ?.filter((block: Block) => block.BlockType === 'LINE')
-                ?.map((block: Block) => block.Text || '')
-                .join('\n')
+            ?.filter((block: Block) => block.BlockType === 'LINE')
+            ?.map((block: Block) => block.Text || '')
+            .join('\n')
             || '';
 
         let extractedInfo = await invokeBedrockModel(bedrockClient, text);
@@ -235,8 +235,9 @@ export const handler = async (event: TextractInterface) => {
             }
         }
     }catch (error){
-        console.log(`Error extracting text: error=${error}`);
-        throw new Error(`Error extracting text: error=${error}`);
+        console.error('Error processing textract data:', error);
+        await publishError('TextractProcessor', error);
+        throw error;
     }
 
     return { id: '', s3Path: originalFilePath };
