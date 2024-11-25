@@ -2,15 +2,13 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { splitS3Url } from './handler/utils';
 import { APIGatewayProxyHandler } from 'aws-lambda';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { publishError } from './helpers';
 
 const s3Client = new S3Client({ region: process.env.REGION });
 
 export const handler: APIGatewayProxyHandler = async (event) => {
     if (!event?.body) {
-        return {
-            statusCode: 400,
-            body: JSON.stringify({ message: 'Request body is missing' })
-        };
+        throw Error('Request body is missing');
     }
 
     // Parse the body and handle potential errors
@@ -19,10 +17,7 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     const { imagePath } = body;
 
     if (!imagePath) {
-        return {
-            statusCode: 400,
-            body: JSON.stringify({ message: 'imagePath is required' })
-        };
+        throw new Error('imagePath is required');
     }
 
     let bucket = '', key = '';
@@ -58,11 +53,8 @@ export const handler: APIGatewayProxyHandler = async (event) => {
             body: JSON.stringify({ url: signedUrl }),
         };
     } catch (error) {
-        console.error('Error generating signed URL:', error);
-
-        return {
-            statusCode: 500,
-            body: JSON.stringify({ message: 'Error generating signed URL' }),
-        };
+        console.error('Unexpected error:', error);
+        await publishError('GetImage', error);
+        throw error;
     }
 };

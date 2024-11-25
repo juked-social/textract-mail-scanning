@@ -1,6 +1,7 @@
 import { getAllMails } from './handler/mail-service';
 import { getSecret } from './handler/secret-manager';
 import { Mail } from './entry/mail';
+import { publishError } from './helpers';
 
 const SECRET_ARN = process.env.SECRET_ARN || '';
 const API_URL = process.env.API_URL || '';
@@ -67,13 +68,13 @@ export const handler = async (event: any): Promise<any[]> => {
 
         // Return idsArray directly as the next state expects it
         if (!results || results.length === 0) {
-            return [];
+            throw new Error('There is no results found');
         }
 
         return results?.map((mail) => ({ id: mail.any_mail_id }));
     } catch (error) {
         console.error('Error:', error);
-
+        await publishError('ApiCaller', error);
         throw new Error('Failed to process mail data');
     }
 };

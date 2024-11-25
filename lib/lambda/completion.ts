@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import chromium from '@sparticuz/chromium';
 import { shredAnytimeMails } from './handler/puppeteer-service';
 import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
+import { publishError } from './helpers';
 
 const CHUNK_SIZE = 20; // Define the chunk size based on your requirements
 
@@ -75,7 +76,8 @@ export const handler = async (event: any) => {
         };
     } catch (error) {
         console.error('Error during processing:', error);
-        throw new Error('Error during processing: ' + error);
+        await publishError('Completion', error);
+        throw error;
     } finally {
         await browser.close();
     }
