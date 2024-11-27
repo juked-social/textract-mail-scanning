@@ -68,7 +68,7 @@ export const handler = async (event: any): Promise<any[]> => {
 
         // Return idsArray directly as the next state expects it
         if (!results || results.length === 0) {
-            throw new Error('There is no results found');
+            throw new Error('There are no emails in Anytimemailbox for the specified search period.');
         }
 
         return results?.map((mail) => ({ id: mail.any_mail_id }));
