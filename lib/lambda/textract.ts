@@ -77,23 +77,27 @@ function isValid(mail: BedrockResponse): isValidReason {
 async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textContent: string) {
     try {
         console.log('Invoking Bedrock model');
-        const systemPrompt = `You are a highly intelligent text processing assistant. 
+        const systemPrompt = `
+        You are an expert document analysis system specializing in carefully extracting and collecting structured user information from handwritten mail.
         Your task is to extract specific information from text extracted via OCR (Optical Character Recognition) from handwritten mail.
         The OCR text might contain minor errors or typos, so carefully analyze the content to correct any mistakes and extract the following details:
 
-        1. **Code**: A unique identifier, typically alphanumeric.
-        2. **User Full Name**: The full name of the user, formatted as "FirstName LastName".
-        3. **Email**: The email address of the user.
-        4. **Address**: The complete mailing address of the user, including street, city, state, and ZIP code.
-        5. **Message**: The main content or message from the user.
-
-        Ensure that the output is structured as a JSON object with the following keys: "code", "user_full_name", "email", "address", and "message".
-
+        <goal>
+        Your goal is to attentively parse the provided data and structure the information into a perfect JSON object:
+        1. code: A unique identifier, typically alphanumeric.
+        2. user_full_name: The full name of the user, formatted as "FirstName LastName".
+        3. email: The email address of the user.
+        4. address: The complete mailing address of the user, including street, city, state, and ZIP code.
+        5. message: The main content or message from the user.
+        </goal>
+        <result>
+        The output is structured as a JSON object with the following keys: "code", "user_full_name", "email", "address", and "message".
+        </result>
         Example input text might include:
         - OCR text with varying levels of legibility.
         - Mixed formats or partial information that needs correcting or formatting.
 
-        Remember:
+        <remember>
         - Correct any typos or errors due to OCR.
         - Ensure proper capitalization and formatting.
         - If certain information is missing or incomplete, infer the best possible result.
@@ -106,6 +110,7 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         - Ensure that the JSON string does not contain newline characters (e.g.,\`\\n\`). All text should be on a single line.
         - Ensure that the JSON string inside the "text" field is properly formatted and does not start or end with extraneous characters or quotes. The JSON should be a single line and correctly escaped. 
         - If you encounter an improperly closed JSON string within the "text" field, correct it by ensuring it starts and ends with the correct quotes and is valid JSON.
+        </remember>
         `;
 
         const userMessage = {
@@ -145,7 +150,7 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         // If no match is found, try appending a closing brace if needed
         if (!extractedInformation.match(/\{[\s\S]*}/)) {
             console.error('Error parsing corrected JSON');
-            throw new Error('Error parsing corrected JSON');
+            return null;
         }
 
         console.log('extractedInformation', extractedInformation);
@@ -153,8 +158,9 @@ async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textConte
         return JSON.parse(extractedInformation || '{}');
     } catch (error) {
         console.log(`Error invoking Bedrock model: ${error}`);
-        throw new Error(`Bedrock model invocation failed: ${error}`);
     }
+
+    return null;
 }
 
 async function readTextFromS3(bucket: string, key: string): Promise<string> {
