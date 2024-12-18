@@ -1,18 +1,16 @@
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import {
-    Block
-} from '@aws-sdk/client-textract';
-import { BedrockResponse, isValidReason, TextractInterface } from './entry/textract';
+import { BedrockResponse, isValidReason } from './entry/textract';
 import {
     extractCardValue,
     splitS3Url
 } from './handler/utils';
-import { BedrockRuntimeClient, InvokeModelCommand, InvokeModelResponse } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { getMailFromDynamoDB, updateMailInDynamoDB } from './handler/mail-service';
 import { Mail } from './entry/mail';
 import * as levenshtein from 'fast-levenshtein';
-import { cleanTextFromS3 } from './handler/temp-service';
 import { publishError } from './helpers';
+import { Readable } from 'node:stream';
+import { getMainPrompt, invokeBedrockModel } from './handler/bedrock-service';
 
 const bedrockClient = new BedrockRuntimeClient({ region: process.env.REGION });
 
@@ -26,6 +24,15 @@ function calculateSimilarityPercentage(message:string, expectedMessage:string): 
     // Calculate similarity percentage
     return (1 - (distance / maxLength)) * 100;
 }
+
+const streamToBuffer = (stream: Readable): Promise<Buffer> => {
+    return new Promise((resolve, reject) => {
+        const chunks: any[] = [];
+        stream.on('data', (chunk) => chunks.push(chunk));
+        stream.on('end', () => resolve(Buffer.concat(chunks)));
+        stream.on('error', reject);
+    });
+};
 
 function isValid(mail: BedrockResponse): isValidReason {
     const expectedMessage = 'I wish to receive Sweeps Coins to participate in the sweepstakes promotions offered by Chanced. By submitting this request, I hereby declare that I have read, understood and agree to be bound by Chanced\'s Terms and Conditions and Sweeps Rules.';
@@ -73,153 +80,46 @@ function isValid(mail: BedrockResponse): isValidReason {
     };
 }
 
-
-async function invokeBedrockModel(bedrockClient: BedrockRuntimeClient, textContent: string) {
-    try {
-        console.log('Invoking Bedrock model');
-        const systemPrompt = `
-        You are an expert document analysis system specializing in carefully extracting and collecting structured user information from handwritten mail.
-        Your task is to extract specific information from text extracted via OCR (Optical Character Recognition) from handwritten mail.
-        The OCR text might contain minor errors or typos, so carefully analyze the content to correct any mistakes and extract the following details:
-
-        <goal>
-        Your goal is to attentively parse the provided data and structure the information into a perfect JSON object:
-        1. code: A unique identifier, typically alphanumeric.
-        2. user_full_name: The full name of the user, formatted as "FirstName LastName".
-        3. email: The email address of the user.
-        4. address: The complete mailing address of the user, including street, city, state, and ZIP code.
-        5. message: The main content or message from the user.
-        </goal>
-        <result>
-        The output is structured as a JSON object with the following keys: "code", "user_full_name", "email", "address", and "message".
-        </result>
-        Example input text might include:
-        - OCR text with varying levels of legibility.
-        - Mixed formats or partial information that needs correcting or formatting.
-
-        <remember>
-        - Correct any typos or errors due to OCR.
-        - Ensure proper capitalization and formatting.
-        - If certain information is missing or incomplete, infer the best possible result.
-        - Only return a perfect JSON object in this format, and no other string values.
-        - Use double quotes around both keys and string values in the JSON. Avoid any unmatched or extra double quotes.
-        - If double quotes appear within a string value, escape them using backslashes (e.g., \`\\"\`), and ensure no extra backslashes are present.
-        - Ensure there are no trailing commas or extra characters. The JSON should be valid and properly formatted.
-        - Replace incorrect characters or symbols with the correct ones.
-        - Properly format the email address and address fields to match standard conventions.
-        - Ensure that the JSON string does not contain newline characters (e.g.,\`\\n\`). All text should be on a single line.
-        - Ensure that the JSON string inside the "text" field is properly formatted and does not start or end with extraneous characters or quotes. The JSON should be a single line and correctly escaped. 
-        - If you encounter an improperly closed JSON string within the "text" field, correct it by ensuring it starts and ends with the correct quotes and is valid JSON.
-        </remember>
-        `;
-
-        const userMessage = {
-            role: 'user',
-            content: `Here is the text to analyze:\n${textContent}`
-        };
-
-        const requestBody = {
-            anthropic_version: 'bedrock-2023-05-31',
-            max_tokens: 180,
-            system: systemPrompt,
-            messages: [userMessage],
-            temperature: 0.5,
-            top_p: 0.9
-        };
-
-        const response: InvokeModelResponse = await bedrockClient.send(new InvokeModelCommand({
-            modelId: bedrockModelId,
-            body: JSON.stringify(requestBody),
-            contentType: 'application/json',
-            accept: 'application/json'
-        }));
-
-        const responseBody = response?.body ? new TextDecoder('utf-8').decode(response.body) : '';
-
-        console.log('responseBody', responseBody);
-        // Parse JSON string to object
-        const extractedInformationJSON = JSON.parse(responseBody);
-
-        // Assume extractedInformation is the text you want to clean
-        const infoText = extractedInformationJSON?.content?.[0]?.text?.split('{')[0].trim();
-        const extractedInformation = extractedInformationJSON?.content?.[0]?.text
-            ?.replace(infoText, '')
-            .replace(/\n/g, '')
-            .trim();
-
-        // If no match is found, try appending a closing brace if needed
-        if (!extractedInformation.match(/\{[\s\S]*}/)) {
-            console.error('Error parsing corrected JSON');
-            return null;
-        }
-
-        console.log('extractedInformation', extractedInformation);
-
-        return JSON.parse(extractedInformation || '{}');
-    } catch (error) {
-        console.log(`Error invoking Bedrock model: ${error}`);
-    }
-
-    return null;
-}
-
-async function readTextFromS3(bucket: string, key: string): Promise<string> {
-    try {
-        console.log(`Reading text from S3: bucket=${bucket}, key=${key}`);
-
-        // Create and send the GetObjectCommand
-        const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-        const response = await s3Client.send(command);
-        return (await response.Body?.transformToString('utf-8') || '');
-    } catch (error) {
-        console.log(`Error reading text from S3: bucket=${bucket}, key=${key}, error=${error}`);
-        throw error;
-    }
-}
-
 // Define the function to update mail in DynamoDB
-export const handler = async (event: TextractInterface) => {
-    const originalFilePath = event?.Payload?.manifest?.s3Path || '';
-
+export const handler = async (event: any) => {
+    event = event.Payload ? event.Payload : event;
+    console.log('event', event);
+    const { s3Path } = event;
+    if(!s3Path || !bedrockModelId) {
+        throw new Error('Missing required  parameter');
+    }
     try {
-        const originalFilePath = event?.Payload?.manifest?.s3Path;
-        const anyMailId = extractCardValue(originalFilePath);
+        console.log('s3Path', s3Path);
+        const { bucket, key } = splitS3Url(s3Path);
+        const anyMailId = extractCardValue(s3Path);
         if(!anyMailId){
-            return { id: '', s3Path: originalFilePath };
+            return { id: '', s3Path };
         }
-
-        const { bucket, key } = splitS3Url(event.Payload.textract_result.TextractTempOutputJsonPath);
-        const textractResponse = await readTextFromS3(bucket, `${key}/1`);
-        console.log('textractResponse', textractResponse);
-        const textractResponseJson = JSON.parse(textractResponse);
-
-        const text = textractResponseJson?.Blocks
-            ?.filter((block: Block) => block.BlockType === 'LINE')
-            ?.map((block: Block) => block.Text || '')
-            .join('\n')
-            || '';
-
-        let extractedInfo = await invokeBedrockModel(bedrockClient, text);
-
-        if (extractedInfo === null) {
-            return { id: '', s3Path: originalFilePath };
+        const s3Command = new GetObjectCommand({
+            Bucket: bucket,
+            Key: key,
+        });
+        const { Body } = await s3Client.send(s3Command);
+        if (!Body || !(Body instanceof Readable)) {
+            throw new Error('Image not found or body is not a readable stream');
         }
+        const imageBuffer = await streamToBuffer(Body);
+        const imageBase64 = imageBuffer.toString('base64');
 
-        if (typeof extractedInfo === 'string') {
-            extractedInfo = JSON.parse(extractedInfo);
-        }
-
-        await cleanTextFromS3(bucket, key);
-
-        const formattedResponse = {
-            handwritten_confidence: 0.85,
-            ...extractedInfo
-        };
+        const prompt = getMainPrompt();
+        const formattedResponse = await invokeBedrockModel<BedrockResponse>(
+            bedrockClient,
+            bedrockModelId,
+            imageBase64,
+            prompt,
+        );
 
         formattedResponse.code = formattedResponse.code ? (formattedResponse.code.replace(/[^a-zA-Z0-9]/g, '')) : '';
         formattedResponse.user_full_name = formattedResponse.user_full_name ? formattedResponse.user_full_name.replace(/[^a-zA-Z\s]/g, '') : '';
         formattedResponse.email = formattedResponse.email ? formattedResponse.email.replace(/[^a-zA-Z0-9_.+-@]/g, '').toLowerCase() : '';
         formattedResponse.message = formattedResponse.message ? formattedResponse.message.replace(/[^a-zA-Z0-9@.\s]/g, '') : '';
+
+        console.log('formattedResponse', formattedResponse);
 
         const mail = await getMailFromDynamoDB(Number(anyMailId));
 
@@ -237,7 +137,7 @@ export const handler = async (event: TextractInterface) => {
             await updateMailInDynamoDB(mailObj);
 
             if(is_valid_reason.is_valid) {
-                return { id: anyMailId, s3Path: originalFilePath };
+                return { id: anyMailId, s3Path };
             }
         }
     }catch (error){
@@ -246,5 +146,5 @@ export const handler = async (event: TextractInterface) => {
         throw error;
     }
 
-    return { id: '', s3Path: originalFilePath };
+    return { id: '', s3Path };
 };
