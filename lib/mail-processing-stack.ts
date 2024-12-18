@@ -10,19 +10,15 @@ import path from 'path';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
-import { TextractGenericAsyncSfnTask, TextractPOCDecider } from 'amazon-textract-idp-cdk-constructs';
 import {
     Chain,
     Choice,
     Condition, DefinitionBody,
-    IntegrationPattern,
-    JsonPath,
     Map,
-    Pass, ProcessorMode, ProcessorType, StateMachine,
+    ProcessorMode, ProcessorType, StateMachine,
     TaskInput, Wait, WaitTime
 } from 'aws-cdk-lib/aws-stepfunctions';
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
-import { Architecture, Code, Function, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Topic } from 'aws-cdk-lib/aws-sns';
 
@@ -155,6 +151,7 @@ export class MailProcessingStack extends cdk.Stack {
                 IMAGE_BUCKET_NAME: imageBucket.bucketName,
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
+                BEDROCK_MODEL_ID: 'anthropic.claude-3-haiku-20240307-v1:0',
             },
             bundling: {
                 nodeModules: ['sharp'],
@@ -178,42 +175,6 @@ export class MailProcessingStack extends cdk.Stack {
                 nodeModules: ['fast-levenshtein'],
             }
         });
-
-        const textractAsyncTask = new TextractGenericAsyncSfnTask(
-            this,
-            'TextractAsync',
-            {
-                s3OutputBucket: imageBucket.bucketName,
-                s3TempOutputPrefix: S3_TEMP_OUTPUT_PREFIX,
-                integrationPattern: IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-                lambdaLogLevel: 'DEBUG',
-                lambdaTimeout: 900,
-                input: TaskInput.fromObject({
-                    Token: JsonPath.taskToken,
-                    ExecutionId: JsonPath.stringAt('$$.Execution.Id'),
-                    Payload: JsonPath.entirePayload,
-                }),
-                resultPath: '$.textract_result',
-            },
-        );
-
-        const textractAsyncRotateTask = new TextractGenericAsyncSfnTask(
-            this,
-            'TextractAsyncRotate',
-            {
-                s3OutputBucket: imageBucket.bucketName,
-                s3TempOutputPrefix: S3_TEMP_OUTPUT_PREFIX,
-                integrationPattern: IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-                lambdaLogLevel: 'DEBUG',
-                lambdaTimeout: 900,
-                input: TaskInput.fromObject({
-                    Token: JsonPath.taskToken,
-                    ExecutionId: JsonPath.stringAt('$$.Execution.Id'),
-                    Payload: JsonPath.entirePayload,
-                }),
-                resultPath: '$.textract_result',
-            },
-        );
 
         const completionLambda = new NodejsFunction(this, 'CompletionLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
@@ -245,52 +206,10 @@ export class MailProcessingStack extends cdk.Stack {
             outputPath: '$.Payload',
         });
 
-        const addQueriesFunction = new Function(
-            this,
-            'addQueriesFunction',
-            {
-                runtime: Runtime.PYTHON_3_9,
-                handler: 'index.lambda_handler',
-                code: Code.fromAsset(
-                    path.join(__dirname, 'lambda/add-queries/app'),
-                ),
-                architecture: Architecture.X86_64,
-                timeout: cdk.Duration.seconds(30),
-            },
-        );
-
         const rotateImage = new LambdaInvoke(this, 'RotateImageTask', {
             lambdaFunction: rotateImageLambda,
             outputPath: '$.Payload',
         });
-
-        const addQueriesTask = new LambdaInvoke(
-            this,
-            'AddQueries',
-            {
-                lambdaFunction: addQueriesFunction,
-                resultPath: '$.Payload',
-            },
-        );
-
-        const addQueriesRotateTask = new LambdaInvoke(
-            this,
-            'AddQueriesRotate',
-            {
-                lambdaFunction: addQueriesFunction,
-                resultPath: '$.Payload',
-            },
-        );
-
-        const afterTextractTask = new LambdaInvoke(this, 'TextractTask', {
-            lambdaFunction: textractLambda,
-            payload: TaskInput.fromObject({
-                'InputParameters.$': '$$.Execution.Input',
-                'Payload.$': '$'
-            }),
-            outputPath: '$.Payload',
-        });
-
         const afterTextractRotateTask = new LambdaInvoke(this, 'TextractRotateTask', {
             lambdaFunction: textractLambda,
             payload: TaskInput.fromObject({
@@ -335,30 +254,18 @@ export class MailProcessingStack extends cdk.Stack {
                 'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
             ],
         }));
+        rotateImageLambda.addToRolePolicy(new PolicyStatement({
+            actions: ['bedrock:InvokeModel'],
+            resources: [
+                'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
+            ],
+        }));
 
-        const textractDecider = new TextractPOCDecider(this, 'TextractDeciderChainStart', {});
-        const textractDeciderRotate = new TextractPOCDecider(this, 'TextractDeciderChainRotate', {});
+        const extractionChain = Chain
+            .start(rotateImage)
+            .next(afterTextractRotateTask);
 
-        const checkRotateImage = new Choice(this, 'CheckIfRotateImage')
-            .when(Condition.or(Condition.isNotPresent('$.id'), Condition.stringEquals('$.id', '')),
-                Chain
-                    .start(rotateImage)
-                    .next(textractDeciderRotate)
-                    .next(addQueriesRotateTask)
-                    .next(textractAsyncRotateTask)
-                    .next(afterTextractRotateTask)
-            )
-            .otherwise(new Pass(this, 'else-block-pass'))
-            .afterwards();
-
-        const textractChain = Chain
-            .start(textractDecider)
-            .next(addQueriesTask)
-            .next(textractAsyncTask)
-            .next(afterTextractTask)
-            .next(checkRotateImage);
-
-        const textractMapTask = new Map(this, 'TextractMapTask', {
+        const mapTask = new Map(this, 'TextractMapTask', {
             maxConcurrency: 10,
             itemsPath: '$.images',
             itemSelector: {
@@ -366,8 +273,8 @@ export class MailProcessingStack extends cdk.Stack {
             },
         });
 
-        textractMapTask.itemProcessor(
-            textractChain,
+        mapTask.itemProcessor(
+            extractionChain,
             {
                 mode: ProcessorMode.DISTRIBUTED,
                 executionType: ProcessorType.STANDARD,
@@ -383,7 +290,7 @@ export class MailProcessingStack extends cdk.Stack {
         const mailFetchingChain = Chain.sequence(mailFetchingTask.next(checkMorePages), s3ProcessingTask);
 
         const definition = mailFetchingChain
-            .next(textractMapTask)
+            .next(mapTask)
             .next(callApiTask)
             .next(completionTask);
 
