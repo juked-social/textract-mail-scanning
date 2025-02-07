@@ -179,16 +179,15 @@ async function readTextFromS3(bucket: string, key: string): Promise<string> {
 
 // Define the function to update mail in DynamoDB
 export const handler = async (event: TextractInterface) => {
-    const originalFilePath = event?.Payload?.manifest?.s3Path || '';
-
     try {
         const originalFilePath = event?.Payload?.manifest?.s3Path;
         const anyMailId = extractCardValue(originalFilePath);
+        const { bucket, key } = splitS3Url(event.Payload.textract_result.TextractTempOutputJsonPath);
+
         if(!anyMailId){
-            return { id: '', s3Path: originalFilePath };
+            return { id: anyMailId, rotate: false };
         }
 
-        const { bucket, key } = splitS3Url(event.Payload.textract_result.TextractTempOutputJsonPath);
         const textractResponse = await readTextFromS3(bucket, `${key}/1`);
         console.log('textractResponse', textractResponse);
         const textractResponseJson = JSON.parse(textractResponse);
@@ -202,7 +201,7 @@ export const handler = async (event: TextractInterface) => {
         let extractedInfo = await invokeBedrockModel(bedrockClient, text);
 
         if (extractedInfo === null) {
-            return { id: '', s3Path: originalFilePath };
+            return { id: anyMailId, rotate: true };
         }
 
         if (typeof extractedInfo === 'string') {
@@ -237,14 +236,14 @@ export const handler = async (event: TextractInterface) => {
             await updateMailInDynamoDB(mailObj);
 
             if(is_valid_reason.is_valid) {
-                return { id: anyMailId, s3Path: originalFilePath };
+                return { id: anyMailId, rotate: false };
             }
         }
+
+        return { id: anyMailId, rotate: true };
     }catch (error){
         console.error('Error processing textract data:', error);
         await publishError('TextractProcessor', error);
         throw error;
     }
-
-    return { id: '', s3Path: originalFilePath };
 };

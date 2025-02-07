@@ -43,7 +43,7 @@ export class MailProcessingStack extends cdk.Stack {
         const secret = new secretsmanager.Secret(this, 'MailTextractSecret', {
             secretName: 'mail-textract-secret', // The name of the secret
             secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({
-                apiToken: '1085503|Ayp8V5GvuGgD9oj4v40AvGUE9LjpARlBatuLIC9z', // API token for authentication
+                apiToken: '1907940|vgMdCbA1t7GmHVXp0ZSyAVUQlipGSxSCYqnY0fOo', // API token for authentication
                 apiToken2Capture: '95c33c5ee78a7e2df987a022fbc34a1d', // API token for 2Captcha
                 anytimeMailUser: 'aaandre94@gmail.com', // AnytimeMail user
                 anytimeMailPassword: 'XZR-qnb1rvu2bdc1zhj', // AnytimeMail password
@@ -172,6 +172,7 @@ export class MailProcessingStack extends cdk.Stack {
                 MAIL_METADATA_TABLE_NAME: mailMetadataTable.tableName,
                 REGION: this.region,
                 BEDROCK_MODEL_ID: 'anthropic.claude-3-haiku-20240307-v1:0',
+                IMAGE_BUCKET_NAME: imageBucket.bucketName,
             },
             timeout: cdk.Duration.minutes(2),
             bundling: {
@@ -241,7 +242,6 @@ export class MailProcessingStack extends cdk.Stack {
 
         const s3ProcessingTask = new LambdaInvoke(this, 'S3ProcessingTask', {
             lambdaFunction: s3ProcessingLambda,
-            inputPath: '$',
             outputPath: '$.Payload',
         });
 
@@ -327,6 +327,7 @@ export class MailProcessingStack extends cdk.Stack {
         mailMetadataTable.grantReadWriteData(s3ProcessingLambda);
         mailMetadataTable.grantReadWriteData(callApiLambda);
         mailMetadataTable.grantReadWriteData(completionLambda);
+        mailMetadataTable.grantReadWriteData(rotateImageLambda);
 
         // Grant textract lambda permission to textract
         textractLambda.addToRolePolicy(new PolicyStatement({
@@ -340,7 +341,7 @@ export class MailProcessingStack extends cdk.Stack {
         const textractDeciderRotate = new TextractPOCDecider(this, 'TextractDeciderChainRotate', {});
 
         const checkRotateImage = new Choice(this, 'CheckIfRotateImage')
-            .when(Condition.or(Condition.isNotPresent('$.id'), Condition.stringEquals('$.id', '')),
+            .when(Condition.booleanEquals('$.rotate', true),
                 Chain
                     .start(rotateImage)
                     .next(textractDeciderRotate)
@@ -362,7 +363,10 @@ export class MailProcessingStack extends cdk.Stack {
             maxConcurrency: 10,
             itemsPath: '$.images',
             itemSelector: {
-                's3Path.$': '$$.Map.Item.Value.s3Key'
+                's3Path': JsonPath.format('s3://{}/{}',
+                    imageBucket.bucketName,
+                    JsonPath.stringAt('$$.Map.Item.Value.s3Key'),
+                )
             },
         });
 

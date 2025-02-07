@@ -1,6 +1,7 @@
 import { getMailByDates } from './handler/mail-service';
 import { Mail } from './entry/mail';
 import { publishError } from './helpers';
+import { splitS3Url } from './handler/utils';
 
 
 export const handler = async (event: any) => {
@@ -19,7 +20,7 @@ export const handler = async (event: any) => {
         const mails = await getMailByDates(startISO, endISO);
 
         const images = mails?.filter((mail: Mail) => !!mail.image_path).map((mail: Mail) => ({
-            s3Key: mail.image_path,
+            s3Key: splitS3Url(mail.image_path)?.key,
         })) || [];
 
         return { images };
