@@ -3,6 +3,7 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3
 import { Readable } from 'node:stream';
 import sharp from 'sharp';
 import { publishError } from './helpers';
+import { getMailFromDynamoDB } from './handler/mail-service';
 
 const s3Client = new S3Client({ region: process.env.REGION });
 
@@ -31,12 +32,20 @@ const streamToBuffer = (stream: Readable): Promise<Buffer> => {
 };
 
 export const handler = async (event: any) => {
-    const { s3Path } = event;
-
     try {
-        if (!s3Path) {
-            throw new Error('Missing required s3Path parameter');
+        const { id } = event;
+
+        if (!id) {
+            throw new Error('Missing required id parameter');
         }
+
+        const mail = await getMailFromDynamoDB(Number(id));
+        if(!mail?.image_path){
+            throw new Error('Image not found');
+        }
+
+        const s3Path = mail?.image_path;
+
         const { bucket, key } = splitS3Url(s3Path);
 
         // Get image from S3
@@ -65,10 +74,10 @@ export const handler = async (event: any) => {
         });
         await s3Client.send(s3ImagePut);
 
+        return { s3Path };
     } catch (error) {
         console.error('Error during image processing:', error);
         await publishError('ImageRotator', error);
         throw error;
     }
-    return { s3Path };
 };
